@@ -1,0 +1,19 @@
+{
+  "name": "Juste la note",
+  "short_name": "Juste la note",
+  "description": "Coach d'oreille et de voix : lire, chanter juste, progresser.",
+  "lang": "fr",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#15171C",
+  "theme_color": "#15171C",
+  "categories": ["music", "education"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
