@@ -10,7 +10,7 @@
      (rapides, ils changent rarement).
    Quand on met l'app à jour, on incrémente le numéro de version ci-dessous. */
 
-const CACHE = "justenote-v4";
+const CACHE = "justenote-v5";
 
 // Fichiers qui composent l'app ("app shell").
 const ASSETS = [
