@@ -247,6 +247,10 @@
 
   <!-- OREILLE -->
   <section id="view-ear" class="hide">
+    <div class="seg" id="modeSeg">
+      <button data-mode="notes" aria-pressed="true">Notes<small>reconnaître une note</small></button>
+      <button data-mode="intervals" aria-pressed="false">Intervalles<small>l'écart entre 2 notes</small></button>
+    </div>
     <div class="seg" id="lvlSeg">
       <button data-lvl="easy" aria-pressed="false">Facile<small>4 choix espacés</small></button>
       <button data-lvl="medium" aria-pressed="true">Moyen<small>4 choix</small></button>
@@ -259,7 +263,7 @@
       <div class="score" id="quizScore">Score : 0 / 0</div>
       <button class="ghost-btn" id="quizNext" style="margin-top:14px;">Nouvelle note</button>
     </div>
-    <p class="sub" style="text-align:center;">Chantez la note avant de répondre — c'est l'exercice qui compte le plus.</p>
+    <p class="sub" style="text-align:center;">Chantez avant de répondre — c'est l'exercice qui compte le plus.</p>
   </section>
 
   <!-- CHANTER -->
@@ -421,7 +425,7 @@ const CLEFS={
 };
 let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false};
 /* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
-let settings={quizLevel:"medium"};
+let settings={quizLevel:"medium",quizMode:"notes"};
 function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
 function saveSettings(){try{localStorage.setItem("justenote_settings",JSON.stringify(settings));}catch(e){}}
 function buildNotes(){
@@ -470,7 +474,9 @@ function soundCurrent(){const n=state.notes[state.idx],c=CLEFS[state.clef];playN
 function go(d){state.idx=Math.max(0,Math.min(state.notes.length-1,state.idx+d));renderStaff();updateReadout();if(state.auto)soundCurrent();}
 
 /* ================= QUIZ OREILLE ================= */
-let quiz={target:null,answered:false};
+let quiz={target:null,answered:false,mode:"notes",rootMidi:0,intervalSemi:0};
+/* Aiguilleur : génère une question du mode courant (notes ou intervalles). */
+function newQuiz(){ return settings.quizMode==="intervals" ? newIntervalQuiz() : newNoteQuiz(); }
 /* Choisit n leurres (autres notes) selon le mode :
    - "far"    : les plus éloignées de la cible → facile à distinguer
    - "near"   : les plus proches (voisines)    → difficile
@@ -485,7 +491,8 @@ function quizDistractors(targetLetter,n,mode){
   }
   return others.slice(0,n);
 }
-function newQuiz(){
+function newNoteQuiz(){
+  quiz.mode="notes";
   const p=state.notes; quiz.target=p[Math.floor(Math.random()*p.length)]; quiz.answered=false;
   const lvl=settings.quizLevel;                       // "easy" | "medium" | "hard"
   const nTotal=lvl==="hard"?6:4;                       // nombre total de propositions
@@ -497,14 +504,68 @@ function newQuiz(){
   box.style.gridTemplateColumns=`repeat(${lvl==="hard"?3:ch.length},1fr)`;
   ch.forEach(l=>{const b=document.createElement("button");b.className="choice";b.textContent=state.notation==="fr"?FR[l]:l;b.onclick=()=>answerQuiz(l,b);box.appendChild(b);});
   document.getElementById("quizQ").textContent="Écoutez, chantez, puis choisissez la note.";
+  document.getElementById("quizNext").textContent="Nouvelle note";
   setTimeout(playQuizNote,250);
+}
+/* ---- Mode intervalles ---- */
+const INTERVALS=[
+  {s:1,n:"Seconde mineure"},{s:2,n:"Seconde majeure"},
+  {s:3,n:"Tierce mineure"},{s:4,n:"Tierce majeure"},
+  {s:5,n:"Quarte juste"},{s:6,n:"Triton"},
+  {s:7,n:"Quinte juste"},{s:8,n:"Sixte mineure"},
+  {s:9,n:"Sixte majeure"},{s:10,n:"Septième mineure"},
+  {s:11,n:"Septième majeure"},{s:12,n:"Octave"}
+];
+// Intervalles proposés selon la difficulté (en demi-tons)
+const INTERVAL_POOLS={ easy:[4,7,12], medium:[2,3,4,5,7,9,12], hard:[1,2,3,4,5,6,7,8,9,10,11,12] };
+const intervalName=s=>{const it=INTERVALS.find(x=>x.s===s);return it?it.n:s+" demi-tons";};
+function newIntervalQuiz(){
+  quiz.mode="intervals"; quiz.answered=false;
+  const lvl=settings.quizLevel, pool=INTERVAL_POOLS[lvl]||INTERVAL_POOLS.medium;
+  const nChoices=lvl==="hard"?6:(lvl==="easy"?pool.length:4);
+  quiz.intervalSemi=pool[Math.floor(Math.random()*pool.length)];
+  // Racine tirée dans la tessiture, pas trop haute pour laisser la place à l'intervalle.
+  const notes=state.notes, c=CLEFS[state.clef];
+  const ri=Math.floor(Math.random()*Math.max(1,notes.length-1)); const root=notes[ri];
+  quiz.rootMidi=midiOf(root.letter,root.oct)+c.shift;   // décalage ténor appliqué (l'intervalle est préservé)
+  // Propositions : la bonne + des leurres tirés du même pool.
+  const others=pool.filter(s=>s!==quiz.intervalSemi).sort(()=>Math.random()-.5).slice(0,Math.max(0,nChoices-1));
+  const ch=[quiz.intervalSemi,...others].sort(()=>Math.random()-.5);
+  const box=document.getElementById("quizChoices"); box.innerHTML="";
+  box.style.gridTemplateColumns="repeat(2,1fr)";        // 2 colonnes : les noms d'intervalles sont longs
+  ch.forEach(s=>{const b=document.createElement("button");b.className="choice";b.style.fontSize="12.5px";
+    b.textContent=intervalName(s);b.onclick=()=>answerInterval(s,b);box.appendChild(b);});
+  document.getElementById("quizQ").textContent="Écoutez les deux notes, chantez l'écart, puis choisissez l'intervalle.";
+  document.getElementById("quizNext").textContent="Nouvel intervalle";
+  setTimeout(playQuizNote,250);
+}
+function playInterval(){
+  playNote(quiz.rootMidi,0.9);                          // première note
+  setTimeout(()=>playNote(quiz.rootMidi+quiz.intervalSemi,1.2),750); // seconde note, après un court silence
+}
+function answerInterval(semi,btn){
+  if(quiz.answered) return; quiz.answered=true;
+  const correct=semi===quiz.intervalSemi;
+  if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10);}
+  else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===intervalName(quiz.intervalSemi))b.classList.add("correct");});}
+  prog.quizTotal++; save();
+  document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
+  document.getElementById("quizQ").textContent=correct?"Juste ! Belle oreille.":`C'était une ${intervalName(quiz.intervalSemi).toLowerCase()}.`;
 }
 /* Met le sélecteur de niveau en accord avec le réglage mémorisé. */
 function syncLevelSeg(){
   document.getElementById("lvlSeg").querySelectorAll("button").forEach(b=>
     b.setAttribute("aria-pressed", b.dataset.lvl===settings.quizLevel ? "true":"false"));
 }
-function playQuizNote(){const c=CLEFS[state.clef];playNote(midiOf(quiz.target.letter,quiz.target.oct)+c.shift);}
+function playQuizNote(){
+  if(quiz.mode==="intervals") return playInterval();
+  const c=CLEFS[state.clef];playNote(midiOf(quiz.target.letter,quiz.target.oct)+c.shift);
+}
+/* Met le sélecteur de mode (Notes / Intervalles) en accord avec le réglage. */
+function syncModeSeg(){
+  document.getElementById("modeSeg").querySelectorAll("button").forEach(b=>
+    b.setAttribute("aria-pressed", b.dataset.mode===settings.quizMode ? "true":"false"));
+}
 function answerQuiz(letter,btn){
   if(quiz.answered) return; quiz.answered=true;
   const correct=letter===quiz.target.letter;
@@ -842,6 +903,9 @@ document.getElementById("quizNext").onclick=newQuiz;
 document.getElementById("lvlSeg").querySelectorAll("button").forEach(b=>{
   b.onclick=()=>{ settings.quizLevel=b.dataset.lvl; saveSettings(); syncLevelSeg(); newQuiz(); };
 });
+document.getElementById("modeSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ settings.quizMode=b.dataset.mode; saveSettings(); syncModeSeg(); newQuiz(); };
+});
 /* chanter */
 document.getElementById("singPrev").onclick=()=>singGo(-1);
 document.getElementById("singNext").onclick=()=>singGo(1);
@@ -867,7 +931,7 @@ document.addEventListener("keydown",e=>{
 });
 
 /* init */
-load(); loadSettings(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg();
+load(); loadSettings(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
 document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
 </script>
 
