@@ -192,7 +192,17 @@
   #svgExc{cursor:pointer;}
   .mchip{display:inline-block;background:var(--ink-3);border:1px solid var(--line);border-radius:8px;
     padding:5px 9px;margin:0 6px 6px 0;font-size:13px;font-variant-numeric:tabular-nums;transition:.12s;}
+  .mchip small{color:var(--muted);font-weight:400;font-size:10.5px;}
+  .mchip.rest{color:var(--muted);font-style:italic;}
   .mchip.on{border-color:var(--brass);color:var(--brass-soft);box-shadow:inset 0 0 0 1px var(--brass);}
+  /* grille des valeurs de note */
+  .dur-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+  .dur-btn{border:1px solid var(--line);background:var(--ink-2);color:var(--text);padding:12px 8px;border-radius:12px;
+    font-family:inherit;font-size:13.5px;font-weight:600;cursor:pointer;transition:.12s;
+    display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.15;}
+  .dur-btn:active{transform:scale(.97);border-color:var(--brass);}
+  .dur-btn small{font-weight:400;color:var(--muted);font-size:10.5px;}
+  .dur-btn.rest{color:var(--muted);}
   .mchip.good{border-color:var(--good);color:#dff0d4;}
   .mchip.mid{border-color:var(--warn);color:#f0e0bf;}
   .mchip.bad{border-color:var(--bad);color:#f3d6d6;}
@@ -338,7 +348,7 @@
       <button class="ghost-btn" id="excRemove" style="margin-top:8px;">Retirer l'image</button>
     </div>
 
-    <p class="panel-title" style="margin-top:8px;">Saisir la mélodie — touchez la portée pour placer une note (ou les flèches), puis « Ajouter »</p>
+    <p class="panel-title" style="margin-top:8px;">Saisir la mélodie — 1) touchez la portée pour la hauteur (ou les flèches), 2) touchez la valeur</p>
     <div class="sheet"><svg id="svgExc" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid meet"></svg></div>
     <div class="notemeta" id="excReadout" style="text-align:center;min-height:15px;"></div>
     <div class="transport">
@@ -346,7 +356,8 @@
       <button class="play secondary" id="excHear"><span>♪</span> Écouter</button>
       <button class="nav-btn" id="excNext" aria-label="note plus haute">▶</button>
     </div>
-    <button class="play" id="excAdd" style="margin-top:10px;"><span>＋</span> Ajouter la note</button>
+    <p class="panel-title" style="margin-top:10px;">Valeur de note à ajouter (touchez)</p>
+    <div class="dur-grid" id="durGrid"></div>
     <div style="display:flex;gap:8px;margin-top:8px;">
       <button class="ghost-btn" id="excDel" style="flex:1;">Effacer la dernière</button>
       <button class="ghost-btn" id="excClear" style="flex:1;">Tout effacer</button>
@@ -533,7 +544,7 @@ function ringHalo(){
 const noteLabel=n=>state.notation==="fr"?FR[n.letter]:n.letter;
 function updateReadout(){
   const n=state.notes[state.idx],nm=document.getElementById("noteName"),mt=document.getElementById("noteMeta");
-  if(state.reveal){nm.classList.remove("hidden");nm.textContent=noteLabel(n);}
+  if(state.reveal){nm.classList.remove("hidden");nm.textContent=noteLabel(n)+n.oct;}
   else{nm.classList.add("hidden");nm.textContent="• • •";}
   const c=CLEFS[state.clef];
   if(c.shift){const so=nameFromMidi(midiOf(n.letter,n.oct)+c.shift);mt.textContent=`écrit ${noteLabel(n)}${n.oct} · sonne ${so.disp}${so.oct}`;}
@@ -613,13 +624,15 @@ function playInterval(){
   setTimeout(()=>playNote(quiz.rootMidi+quiz.intervalSemi,1.2),750); // seconde note, après un court silence
 }
 function answerInterval(semi,btn){
-  if(quiz.answered) return; quiz.answered=true;
+  // Déjà répondu : on rejoue l'intervalle touché (racine + note de l'écart) pour comparer.
+  if(quiz.answered){ playNote(quiz.rootMidi,0.7); setTimeout(()=>playNote(quiz.rootMidi+semi,1.0),650); return; }
+  quiz.answered=true;
   const correct=semi===quiz.intervalSemi;
   if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10);}
   else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===intervalName(quiz.intervalSemi))b.classList.add("correct");});}
   prog.quizTotal++; save();
   document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
-  document.getElementById("quizQ").textContent=correct?"Juste ! Belle oreille.":`C'était une ${intervalName(quiz.intervalSemi).toLowerCase()}.`;
+  document.getElementById("quizQ").textContent=(correct?"Juste ! Belle oreille.":`C'était une ${intervalName(quiz.intervalSemi).toLowerCase()}.`)+" Touchez une réponse pour l'écouter.";
 }
 /* Met le sélecteur de niveau en accord avec le réglage mémorisé. */
 function syncLevelSeg(){
@@ -636,13 +649,15 @@ function syncModeSeg(){
     b.setAttribute("aria-pressed", b.dataset.mode===settings.quizMode ? "true":"false"));
 }
 function answerQuiz(letter,btn){
-  if(quiz.answered) return; quiz.answered=true;
+  // Déjà répondu : on rejoue la note touchée (à l'octave de la cible) pour comparer.
+  if(quiz.answered){ playNote(midiOf(letter,quiz.target.oct)+CLEFS[state.clef].shift,1.0); return; }
+  quiz.answered=true;
   const correct=letter===quiz.target.letter;
   if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10);}
   else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===(state.notation==="fr"?FR[quiz.target.letter]:quiz.target.letter))b.classList.add("correct");});}
   prog.quizTotal++; save();
   document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
-  document.getElementById("quizQ").textContent=correct?"Juste ! Belle oreille.":`C'était ${state.notation==="fr"?FR[quiz.target.letter]:quiz.target.letter}.`;
+  document.getElementById("quizQ").textContent=(correct?"Juste ! Belle oreille.":`C'était ${state.notation==="fr"?FR[quiz.target.letter]:quiz.target.letter}.`)+" Touchez une réponse pour l'écouter.";
 }
 
 /* ================= PIANO ================= */
@@ -970,28 +985,59 @@ function excStaffClick(e){
   renderExcStaff(); updateExcReadout();
   playNote(excCursorMidi(),0.9);                            // retour sonore de vérification
 }
-function excAdd(){ const n=state.notes[state.excIdx]; excerpt.melody.push({midi:excCursorMidi(),name:noteLabel(n)+n.oct}); saveExcerpt(); renderMelody(); }
+/* Valeurs de note, classées des plus fréquentes aux plus rares (beats = durée en temps). */
+const DURATIONS=[
+  {k:"noire",   label:"Noire",         hint:"1 temps",         beats:1},
+  {k:"croche",  label:"Croche",        hint:"½ temps",         beats:0.5},
+  {k:"blanche", label:"Blanche",       hint:"2 temps",         beats:2},
+  {k:"noireP",  label:"Noire pointée", hint:"1½ temps",        beats:1.5},
+  {k:"silence", label:"Silence",       hint:"soupir · 1 temps",beats:1,   rest:true},
+  {k:"ronde",   label:"Ronde",         hint:"4 temps",         beats:4},
+  {k:"doubleC", label:"Double-croche", hint:"¼ temps",         beats:0.25},
+  {k:"demiS",   label:"Demi-soupir",   hint:"½ temps · silence",beats:0.5, rest:true}
+];
+function buildDurButtons(){
+  const g=document.getElementById("durGrid"); g.innerHTML="";
+  DURATIONS.forEach(d=>{
+    const b=document.createElement("button");
+    b.className="dur-btn"+(d.rest?" rest":"");
+    b.innerHTML=`${d.label}<small>${d.hint}</small>`;
+    b.onclick=()=>excAddDuration(d);
+    g.appendChild(b);
+  });
+}
+// Ajoute une note (à la hauteur du curseur) ou un silence, avec la valeur choisie.
+function excAddDuration(d){
+  if(d.rest){ excerpt.melody.push({rest:true,dur:d.beats,name:d.label}); } // ex. "Silence", "Demi-soupir"
+  else{
+    const n=state.notes[state.excIdx], midi=excCursorMidi();
+    excerpt.melody.push({midi,name:noteLabel(n)+n.oct,dur:d.beats,durLabel:d.label});
+    playNote(midi,d.beats*(TEMPO[excerpt.tempo]||0.75));   // aperçu sonore de la note ajoutée
+  }
+  saveExcerpt(); renderMelody();
+}
 function excDelLast(){ excerpt.melody.pop(); saveExcerpt(); renderMelody(); }
 function excClear(){ if(loop.on) loopStop(); if(train.on) trainStop(); excerpt.melody=[]; saveExcerpt(); renderMelody(); document.getElementById("trainBox").classList.add("hide"); }
 function renderMelody(){
   const box=document.getElementById("melodyChips"), n=excerpt.melody.length;
   document.getElementById("loopBtn").disabled = n===0;
   document.getElementById("trainBtn").disabled = n===0;
-  if(!n){ box.innerHTML='<span class="notemeta">Aucune note pour l’instant. Placez une note et touchez « Ajouter la note ».</span>'; return; }
-  box.innerHTML=excerpt.melody.map((m,i)=>`<span class="mchip" data-i="${i}">${m.name}</span>`).join("");
+  if(!n){ box.innerHTML='<span class="notemeta">Aucune note pour l’instant. Choisissez une hauteur, puis une valeur de note ci-dessus.</span>'; return; }
+  box.innerHTML=excerpt.melody.map((m,i)=>`<span class="mchip${m.rest?' rest':''}" data-i="${i}">${m.name}${m.durLabel?`<small> ${m.durLabel}</small>`:""}</span>`).join("");
 }
 
 /* --- Lecture en boucle, avec la note en cours surlignée --- */
 let loop={on:false,timer:null,idx:0};
-const TEMPO={lent:1.1,moyen:0.75,rapide:0.5}; // durée d'une note, en secondes
+const TEMPO={lent:1.1,moyen:0.75,rapide:0.5}; // secondes par temps (une noire)
 function highlightChip(i){document.querySelectorAll("#melodyChips .mchip").forEach(c=>c.classList.toggle("on",+c.dataset.i===i));}
 function clearHighlight(){document.querySelectorAll("#melodyChips .mchip").forEach(c=>c.classList.remove("on"));}
 function loopStep(){
   if(!loop.on || !excerpt.melody.length) return;
-  const m=excerpt.melody[loop.idx], dur=TEMPO[excerpt.tempo]||0.75;
-  playNote(m.midi,dur); highlightChip(loop.idx);
+  const m=excerpt.melody[loop.idx], spb=TEMPO[excerpt.tempo]||0.75, dur=(m.dur||1)*spb; // durée réelle selon la valeur de note
+  if(!m.rest) playNote(m.midi,dur);              // un silence : on attend sans jouer
+  highlightChip(loop.idx);
   loop.idx=(loop.idx+1)%excerpt.melody.length;
-  loop.timer=setTimeout(loopStep,(dur+0.12)*1000); // petit silence entre les notes
+  loop.timer=setTimeout(loopStep,(dur+0.08)*1000); // petit silence entre les notes
 }
 function loopStart(){ if(!excerpt.melody.length) return; loop.on=true; loop.idx=0; document.getElementById("loopBtn").innerHTML="<span>■</span> Arrêter"; loopStep(); }
 function loopStop(){ loop.on=false; clearTimeout(loop.timer); document.getElementById("loopBtn").innerHTML="<span>▶</span> Jouer en boucle"; clearHighlight(); }
@@ -1021,6 +1067,7 @@ async function trainStart(){
 }
 function trainNextNote(){
   if(!train.on) return;
+  while(train.idx<excerpt.melody.length && excerpt.melody[train.idx].rest) train.idx++; // on saute les silences
   if(train.idx>=excerpt.melody.length){ trainFinish(); return; }
   const m=excerpt.melody[train.idx];
   setTrainStatus(`Note ${train.idx+1}/${excerpt.melody.length} — écoutez : ${m.name}`);
@@ -1295,7 +1342,7 @@ document.getElementById("excPrev").onclick=()=>excGo(-1);
 document.getElementById("excNext").onclick=()=>excGo(1);
 document.getElementById("svgExc").onclick=excStaffClick;
 document.getElementById("excHear").onclick=()=>playNote(excCursorMidi());
-document.getElementById("excAdd").onclick=excAdd;
+buildDurButtons();
 document.getElementById("excDel").onclick=excDelLast;
 document.getElementById("excClear").onclick=excClear;
 document.getElementById("loopBtn").onclick=toggleLoop;
