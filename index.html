@@ -187,6 +187,18 @@
     padding:11px 13px;font-size:12.5px;color:#f0d6d3;line-height:1.5;}
   .notice.info{background:rgba(201,154,59,.1);border-color:rgba(201,154,59,.35);color:#f0e0bf;}
 
+  /* extrait : image de référence + puces de mélodie */
+  #excImg{width:100%;border-radius:10px;display:block;}
+  #svgExc{cursor:pointer;}
+  .mchip{display:inline-block;background:var(--ink-3);border:1px solid var(--line);border-radius:8px;
+    padding:5px 9px;margin:0 6px 6px 0;font-size:13px;font-variant-numeric:tabular-nums;transition:.12s;}
+  .mchip.on{border-color:var(--brass);color:var(--brass-soft);box-shadow:inset 0 0 0 1px var(--brass);}
+  .mchip.good{border-color:var(--good);color:#dff0d4;}
+  .mchip.mid{border-color:var(--warn);color:#f0e0bf;}
+  .mchip.bad{border-color:var(--bad);color:#f3d6d6;}
+  .mchip.miss{opacity:.5;}
+  .play:disabled,.ghost-btn:disabled{opacity:.4;cursor:default;box-shadow:none;}
+
   /* bottom nav */
   nav.bn{position:fixed;bottom:0;left:0;right:0;height:var(--nav-h);background:rgba(21,23,28,.94);
     backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;z-index:50;}
@@ -311,6 +323,48 @@
     </div>
   </section>
 
+  <!-- EXTRAIT (import + saisie mélodie + boucle) -->
+  <section id="view-excerpt" class="hide">
+    <input type="file" id="excFile" accept="image/*" style="display:none">
+    <button class="ghost-btn" id="excPick" style="width:100%;"><span>🖼️</span> Choisir un extrait (photo)</button>
+    <div id="excError" class="notice hide" style="margin-top:8px;"></div>
+    <div id="excImgBox" class="hide" style="margin-top:8px;">
+      <div class="sheet" style="padding:6px;"><img id="excImg" alt="Extrait de partition importé"></div>
+      <button class="ghost-btn" id="excRemove" style="margin-top:8px;">Retirer l'image</button>
+    </div>
+
+    <p class="panel-title" style="margin-top:8px;">Saisir la mélodie — touchez la portée pour placer une note (ou les flèches), puis « Ajouter »</p>
+    <div class="sheet"><svg id="svgExc" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="notemeta" id="excReadout" style="text-align:center;min-height:15px;"></div>
+    <div class="transport">
+      <button class="nav-btn" id="excPrev" aria-label="note plus basse">◀</button>
+      <button class="play secondary" id="excHear"><span>♪</span> Écouter</button>
+      <button class="nav-btn" id="excNext" aria-label="note plus haute">▶</button>
+    </div>
+    <button class="play" id="excAdd" style="margin-top:10px;"><span>＋</span> Ajouter la note</button>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="ghost-btn" id="excDel" style="flex:1;">Effacer la dernière</button>
+      <button class="ghost-btn" id="excClear" style="flex:1;">Tout effacer</button>
+    </div>
+
+    <p class="panel-title" style="margin-top:8px;">Ma mélodie</p>
+    <div id="melodyChips" style="min-height:24px;"></div>
+
+    <div class="seg" id="tempoSeg" style="margin-top:4px;">
+      <button data-tempo="lent" aria-pressed="false">Lent</button>
+      <button data-tempo="moyen" aria-pressed="true">Moyen</button>
+      <button data-tempo="rapide" aria-pressed="false">Rapide</button>
+    </div>
+    <button class="play" id="loopBtn" style="margin-top:8px;" disabled><span>▶</span> Jouer en boucle</button>
+    <button class="play secondary" id="trainBtn" style="margin-top:8px;" disabled><span>🎙️</span> S'entraîner au micro (note par note)</button>
+    <div id="trainBox" class="hide" style="margin-top:10px;">
+      <div class="verdict" id="trainStatus" style="margin-top:0;"></div>
+      <div id="trainSummary"></div>
+      <div class="notemeta" style="text-align:center;margin-top:6px;">La note juge la hauteur (justesse), pas le timbre.</div>
+    </div>
+    <p class="sub">Vous placez la note comme elle est écrite ; en clé de sol ténor, le son sonne une octave plus bas — c'est pris en compte automatiquement.</p>
+  </section>
+
   <!-- PROGRÈS -->
   <section id="view-progress" class="hide">
     <div class="level-hero">
@@ -349,6 +403,7 @@
   <button data-view="read" aria-current="true"><span class="ni">𝄞</span>Lire</button>
   <button data-view="ear"><span class="ni">👂</span>Oreille</button>
   <button data-view="sing"><span class="ni">🎙️</span>Chanter</button>
+  <button data-view="excerpt"><span class="ni">🎼</span>Extrait</button>
   <button data-view="progress"><span class="ni">🏅</span>Progrès</button>
   <button data-view="tech"><span class="ni">📖</span>Technique</button>
 </nav>
@@ -432,7 +487,7 @@ function buildNotes(){
   const c=CLEFS[state.clef],[lo,hi]=c.range;
   const dLo=diatonic(lo[0],lo[1]),dHi=diatonic(hi[0],hi[1]),arr=[];
   for(let d=dLo;d<=dHi;d++){arr.push({letter:LETTERS[((d%7)+7)%7],oct:Math.floor(d/7),dia:d});}
-  state.notes=arr; state.idx=Math.floor(arr.length/2); state.singIdx=Math.floor(arr.length/2);
+  state.notes=arr; state.idx=Math.floor(arr.length/2); state.singIdx=Math.floor(arr.length/2); state.excIdx=Math.floor(arr.length/2);
 }
 
 /* ================= PORTÉE ================= */
@@ -441,22 +496,26 @@ const el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAt
 const STAFF={x0:24,x1:300,top:60,gap:13};
 const lineY=i=>STAFF.top+i*STAFF.gap;
 function yForDia(dia){const c=CLEFS[state.clef];const db=diatonic(c.bottom[0],c.bottom[1]);return lineY(4)-(dia-db)*(STAFF.gap/2);}
-function renderStaff(){
-  const svg=document.getElementById("svgRead"); svg.innerHTML=""; const c=CLEFS[state.clef];
+/* Dessine une portée (5 lignes + clé + note) dans le SVG demandé.
+   withHalo : ajoute le halo animé (seulement pour l'onglet Lire). */
+function renderStaffInto(svgId,n,withHalo){
+  const svg=document.getElementById(svgId); svg.innerHTML=""; const c=CLEFS[state.clef];
   for(let i=0;i<5;i++) svg.appendChild(el("line",{x1:STAFF.x0,y1:lineY(i),x2:STAFF.x1,y2:lineY(i),stroke:"var(--paper-line)","stroke-width":1.4}));
   const clef=el("text",{x:STAFF.x0+2,y:lineY(4)+(c.name==="fa"?-3:6),"font-size":(c.name==="fa"?42:58),fill:"var(--paper-line)","font-family":"serif"});
   clef.textContent=c.glyph; svg.appendChild(clef);
   if(c.name==="sol8"){const e8=el("text",{x:STAFF.x0+14,y:lineY(4)+26,"font-size":13,fill:"var(--paper-line)","font-family":"serif","text-anchor":"middle"});e8.textContent="8";svg.appendChild(e8);}
-  const n=state.notes[state.idx],cx=200,cy=yForDia(n.dia);
+  const cx=200,cy=yForDia(n.dia);
   const db=diatonic(c.bottom[0],c.bottom[1]),dtop=db+8;
   for(let d=dtop+2;d<=n.dia;d+=2){const y=yForDia(d);svg.appendChild(el("line",{x1:cx-15,y1:y,x2:cx+15,y2:y,stroke:"var(--paper-line)","stroke-width":1.4}));}
   for(let d=db-2;d>=n.dia;d-=2){const y=yForDia(d);svg.appendChild(el("line",{x1:cx-15,y1:y,x2:cx+15,y2:y,stroke:"var(--paper-line)","stroke-width":1.4}));}
-  svg.appendChild(el("circle",{cx:cx,cy:cy,r:9,fill:"none",stroke:"var(--brass)","stroke-width":0,opacity:0,id:"halo"}));
+  if(withHalo) svg.appendChild(el("circle",{cx:cx,cy:cy,r:9,fill:"none",stroke:"var(--brass)","stroke-width":0,opacity:0,id:"halo"}));
   svg.appendChild(el("ellipse",{cx:cx,cy:cy,rx:8.4,ry:6,fill:"var(--brass)",transform:`rotate(-18 ${cx} ${cy})`}));
   const up=n.dia<db+4;
   if(up) svg.appendChild(el("line",{x1:cx+7.6,y1:cy-1,x2:cx+7.6,y2:cy-34,stroke:"var(--brass)","stroke-width":1.8}));
   else svg.appendChild(el("line",{x1:cx-7.6,y1:cy+1,x2:cx-7.6,y2:cy+34,stroke:"var(--brass)","stroke-width":1.8}));
 }
+function renderStaff(){ renderStaffInto("svgRead", state.notes[state.idx], true); }
+function renderExcStaff(){ renderStaffInto("svgExc", state.notes[state.excIdx], false); }
 function ringHalo(){
   const h=document.getElementById("halo"); if(h) h.animate([{strokeWidth:0,opacity:.9,rx:9,ry:9},{strokeWidth:.5,opacity:0,rx:26,ry:26}],{duration:600,easing:"ease-out"});
   const s=document.getElementById("sheetRead"); s.classList.remove("ring"); void s.offsetWidth; s.classList.add("ring");
@@ -596,7 +655,10 @@ const lit=k=>{k.classList.add("lit");setTimeout(()=>k.classList.remove("lit"),30
 
 /* ================= MICRO / PITCH ================= */
 let mic={stream:null,analyser:null,buf:null,raf:null,on:false,lastAnalyse:0};
-async function startMic(){
+/* Active le micro (une seule fois) et prépare l'analyseur. Réutilisable par
+   l'onglet Chanter ET l'onglet Extrait. Renvoie true si le micro est prêt. */
+async function ensureMic(){
+  if(mic.on) return true;
   try{
     const ctx=ac();
     const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
@@ -604,14 +666,20 @@ async function startMic(){
     const src=ctx.createMediaStreamSource(stream);
     const an=ctx.createAnalyser(); an.fftSize=2048; src.connect(an);
     mic.analyser=an; mic.buf=new Float32Array(an.fftSize); mic.on=true;
-    document.getElementById("micGate").classList.add("hide");
-    document.getElementById("micLive").classList.remove("hide");
-    loopMic();
-  }catch(e){
+    return true;
+  }catch(e){ return false; }
+}
+async function startMic(){
+  const ok=await ensureMic();
+  if(!ok){
     document.getElementById("micGate").innerHTML=
       '<div class="notice">Micro indisponible ici. Dans l\'aperçu intégré, l\'accès au micro est souvent bloqué.<br><br>'+
       '<b>Solution :</b> téléchargez ce fichier et ouvrez-le dans Safari ou Chrome, puis autorisez le micro. Tout le reste fonctionne dans l\'aperçu.</div>';
+    return;
   }
+  document.getElementById("micGate").classList.add("hide");
+  document.getElementById("micLive").classList.remove("hide");
+  loopMic();
 }
 function autoCorrelate(buf,sr){
   let SIZE=buf.length,rms=0;
@@ -736,6 +804,156 @@ function updateSingTarget(){
   else document.getElementById("singTargetMeta").textContent=`à chanter : ${noteLabel(n)}${n.oct}`;
 }
 function singGo(d){state.singIdx=Math.max(0,Math.min(state.notes.length-1,state.singIdx+d));updateSingTarget();if(state.droneOn)startDrone(singTargetMidi());document.getElementById("scoreCardBox").innerHTML="";}
+
+/* ================= EXTRAIT (import + saisie + boucle) ================= */
+let excerpt={melody:[],tempo:"moyen"};
+function loadExcerpt(){try{const r=localStorage.getItem("justenote_excerpt");if(r)excerpt=Object.assign(excerpt,JSON.parse(r));}catch(e){}}
+function saveExcerpt(){try{localStorage.setItem("justenote_excerpt",JSON.stringify(excerpt));}catch(e){}}
+
+/* --- Image de référence (réduite puis conservée localement) --- */
+function showExcImg(dataURL){document.getElementById("excImg").src=dataURL;document.getElementById("excImgBox").classList.remove("hide");}
+function loadExcerptImg(){try{const d=localStorage.getItem("justenote_excerpt_img");if(d)showExcImg(d);}catch(e){}}
+function handleExcFile(file){
+  const err=document.getElementById("excError"); err.classList.add("hide"); err.textContent="";
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const img=new Image();
+    img.onload=()=>{
+      // On réduit l'image pour qu'elle tienne dans la mémoire du navigateur.
+      const max=1200, sc=Math.min(1,max/Math.max(img.width,img.height));
+      const w=Math.round(img.width*sc), h=Math.round(img.height*sc);
+      const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      cv.getContext("2d").drawImage(img,0,0,w,h);
+      let data; try{ data=cv.toDataURL("image/jpeg",0.75); }catch(x){ data=e.target.result; }
+      try{ localStorage.setItem("justenote_excerpt_img",data); }
+      catch(x){ err.textContent="Image affichée, mais trop lourde pour être conservée à la fermeture."; err.classList.remove("hide"); }
+      showExcImg(data);
+    };
+    img.onerror=()=>{ err.textContent="Image non reconnue (format HEIC de l'iPhone ?). Essayez une capture d'écran, ou un JPEG/PNG."; err.classList.remove("hide"); };
+    img.src=e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeExcImg(){ try{localStorage.removeItem("justenote_excerpt_img");}catch(e){} document.getElementById("excImgBox").classList.add("hide"); document.getElementById("excImg").removeAttribute("src"); }
+
+/* --- Saisie de la mélodie via la portée (respecte la clé et le décalage ténor) --- */
+function excCursorMidi(){const n=state.notes[state.excIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+c.shift;}
+function updateExcReadout(){
+  const n=state.notes[state.excIdx],c=CLEFS[state.clef];
+  if(c.shift){const so=nameFromMidi(midiOf(n.letter,n.oct)+c.shift);document.getElementById("excReadout").textContent=`écrit ${noteLabel(n)}${n.oct} · sonne ${so.disp}${so.oct}`;}
+  else document.getElementById("excReadout").textContent=`${noteLabel(n)}${n.oct}`;
+}
+function excGo(d){ state.excIdx=Math.max(0,Math.min(state.notes.length-1,state.excIdx+d)); renderExcStaff(); updateExcReadout(); }
+/* Clic/tap sur la portée : on convertit la hauteur du point touché en note.
+   On mappe la position verticale (y) sur le degré de la portée le plus proche. */
+function excStaffClick(e){
+  const svg=document.getElementById("svgExc"), ctm=svg.getScreenCTM(); if(!ctm) return;
+  const pt=svg.createSVGPoint(); pt.x=e.clientX; pt.y=e.clientY;
+  const loc=pt.matrixTransform(ctm.inverse());              // coordonnées internes du SVG
+  const c=CLEFS[state.clef], db=diatonic(c.bottom[0],c.bottom[1]);
+  const dia=Math.round(db+(lineY(4)-loc.y)*2/STAFF.gap);    // degré le plus proche
+  const dLo=state.notes[0].dia, dHi=state.notes[state.notes.length-1].dia;
+  state.excIdx=Math.max(dLo,Math.min(dHi,dia))-dLo;         // on reste dans la tessiture
+  renderExcStaff(); updateExcReadout();
+  playNote(excCursorMidi(),0.9);                            // retour sonore de vérification
+}
+function excAdd(){ const n=state.notes[state.excIdx]; excerpt.melody.push({midi:excCursorMidi(),name:noteLabel(n)+n.oct}); saveExcerpt(); renderMelody(); }
+function excDelLast(){ excerpt.melody.pop(); saveExcerpt(); renderMelody(); }
+function excClear(){ if(loop.on) loopStop(); if(train.on) trainStop(); excerpt.melody=[]; saveExcerpt(); renderMelody(); document.getElementById("trainBox").classList.add("hide"); }
+function renderMelody(){
+  const box=document.getElementById("melodyChips"), n=excerpt.melody.length;
+  document.getElementById("loopBtn").disabled = n===0;
+  document.getElementById("trainBtn").disabled = n===0;
+  if(!n){ box.innerHTML='<span class="notemeta">Aucune note pour l’instant. Placez une note et touchez « Ajouter la note ».</span>'; return; }
+  box.innerHTML=excerpt.melody.map((m,i)=>`<span class="mchip" data-i="${i}">${m.name}</span>`).join("");
+}
+
+/* --- Lecture en boucle, avec la note en cours surlignée --- */
+let loop={on:false,timer:null,idx:0};
+const TEMPO={lent:1.1,moyen:0.75,rapide:0.5}; // durée d'une note, en secondes
+function highlightChip(i){document.querySelectorAll("#melodyChips .mchip").forEach(c=>c.classList.toggle("on",+c.dataset.i===i));}
+function clearHighlight(){document.querySelectorAll("#melodyChips .mchip").forEach(c=>c.classList.remove("on"));}
+function loopStep(){
+  if(!loop.on || !excerpt.melody.length) return;
+  const m=excerpt.melody[loop.idx], dur=TEMPO[excerpt.tempo]||0.75;
+  playNote(m.midi,dur); highlightChip(loop.idx);
+  loop.idx=(loop.idx+1)%excerpt.melody.length;
+  loop.timer=setTimeout(loopStep,(dur+0.12)*1000); // petit silence entre les notes
+}
+function loopStart(){ if(!excerpt.melody.length) return; loop.on=true; loop.idx=0; document.getElementById("loopBtn").innerHTML="<span>■</span> Arrêter"; loopStep(); }
+function loopStop(){ loop.on=false; clearTimeout(loop.timer); document.getElementById("loopBtn").innerHTML="<span>▶</span> Jouer en boucle"; clearHighlight(); }
+function toggleLoop(){ loop.on?loopStop():loopStart(); }
+function syncTempoSeg(){document.getElementById("tempoSeg").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.tempo===excerpt.tempo?"true":"false"));}
+
+/* --- Entraînement au micro, note par note ---
+   Pour chaque note de la mélodie : courte référence jouée, puis on écoute ~2,2 s
+   et on note la JUSTESSE (écart moyen en cents). Bilan à la fin. */
+let train={on:false,idx:0,results:[],raf:null};
+function setTrainStatus(t){document.getElementById("trainStatus").textContent=t;}
+function trainStop(){
+  train.on=false; if(train.raf)cancelAnimationFrame(train.raf);
+  document.getElementById("trainBtn").innerHTML="<span>🎙️</span> S'entraîner au micro (note par note)";
+}
+function toggleTrain(){ train.on?trainStop():trainStart(); }
+async function trainStart(){
+  if(!excerpt.melody.length) return;
+  if(loop.on) loopStop();
+  const box=document.getElementById("trainBox"); box.classList.remove("hide");
+  document.getElementById("trainSummary").innerHTML=""; setTrainStatus("Autorisez le micro…");
+  const ok=await ensureMic();
+  if(!ok){ setTrainStatus(""); document.getElementById("trainSummary").innerHTML='<div class="notice">Micro indisponible ou refusé. Ouvrez l\'app dans Safari/Chrome et autorisez le micro.</div>'; return; }
+  train.on=true; train.idx=0; train.results=[];
+  document.getElementById("trainBtn").innerHTML="<span>■</span> Arrêter l'entraînement";
+  trainNextNote();
+}
+function trainNextNote(){
+  if(!train.on) return;
+  if(train.idx>=excerpt.melody.length){ trainFinish(); return; }
+  const m=excerpt.melody[train.idx];
+  setTrainStatus(`Note ${train.idx+1}/${excerpt.melody.length} — écoutez : ${m.name}`);
+  playNote(m.midi,0.7);                      // courte référence
+  setTimeout(()=>collectNote(m),900);        // on écoute APRÈS la référence (pas de pollution)
+}
+function collectNote(m){
+  if(!train.on) return;
+  setTrainStatus(`Note ${train.idx+1}/${excerpt.melody.length} — chantez : ${m.name} …`);
+  const tFreq=midiToFreq(m.midi), buf=new Float32Array(mic.analyser.fftSize);
+  const dur=2200, t0=performance.now(); let last=0; const samples=[];
+  const step=()=>{
+    if(!train.on) return;
+    const now=performance.now();
+    if(now-last>=40){ last=now;
+      mic.analyser.getFloatTimeDomainData(buf);
+      const f=autoCorrelate(buf,ac().sampleRate);
+      if(f>0) samples.push(1200*Math.log2(f/tFreq));
+    }
+    if(now-t0<dur){ train.raf=requestAnimationFrame(step); }
+    else { scoreNote(m,samples); }
+  };
+  train.raf=requestAnimationFrame(step);
+}
+function scoreNote(m,samples){
+  const valid=samples.length;
+  if(valid<6){ train.results.push({name:m.name,score:null}); }
+  else{
+    const meanAbs=samples.reduce((a,b)=>a+Math.abs(b),0)/valid;
+    const score=Math.round(Math.max(0,Math.min(100,100*(1-meanAbs/50))));
+    train.results.push({name:m.name,score,cents:Math.round(meanAbs)});
+  }
+  train.idx++; setTimeout(trainNextNote,400);
+}
+function trainFinish(){
+  train.on=false;
+  document.getElementById("trainBtn").innerHTML="<span>🎙️</span> Recommencer l'entraînement";
+  const heard=train.results.filter(r=>r.score!==null);
+  const avg=heard.length?Math.round(heard.reduce((a,r)=>a+r.score,0)/heard.length):0;
+  setTrainStatus(heard.length?`Terminé — justesse moyenne ${avg}/100`:"Je ne vous ai presque pas entendu. Rapprochez-vous du micro.");
+  document.getElementById("trainSummary").innerHTML=train.results.map(r=>{
+    if(r.score===null) return `<span class="mchip miss">${r.name} ✕</span>`;
+    const cls=r.score>=80?"good":r.score>=50?"mid":"bad";
+    return `<span class="mchip ${cls}">${r.name} · ${r.score}</span>`;
+  }).join("");
+}
 
 /* ================= PROGRÈS / RÉCOMPENSES ================= */
 const LEVELS=[
@@ -863,28 +1081,33 @@ const TITLES={
   ear:["Entraînement d'oreille","On joue une note : chantez-la, puis reconnaissez-la."],
   sing:["Chantez juste","Le micro vous écoute et vous corrige en temps réel."],
   progress:["Vos progrès","Niveaux, séries et récompenses gagnés au fil des séances."],
-  tech:["Technique lyrique","Exercices de souffle, de placement et de passaggio."]
+  tech:["Technique lyrique","Exercices de souffle, de placement et de passaggio."],
+  excerpt:["Votre extrait","Importez, saisissez la mélodie, puis travaillez-la en boucle."]
 };
 function switchView(v){
   // En quittant l'onglet Chanter, on coupe le bourdon et on remet l'interrupteur à zéro
   if(v!=="sing"&&state.droneOn){state.droneOn=false;stopDrone();const sw=document.getElementById("swDrone");if(sw)sw.setAttribute("aria-pressed","false");}
+  // En quittant l'onglet Extrait, on arrête la lecture en boucle et l'entraînement
+  if(v!=="excerpt"&&loop.on) loopStop();
+  if(v!=="excerpt"&&train.on) trainStop();
   document.querySelectorAll("#bottomNav button").forEach(b=>b.setAttribute("aria-current",b.dataset.view===v?"true":"false"));
-  ["read","ear","sing","progress","tech"].forEach(k=>document.getElementById("view-"+k).classList.toggle("hide",k!==v));
-  document.getElementById("clefRow").classList.toggle("hide",!(v==="read"||v==="ear"||v==="sing"));
-  document.getElementById("footNote").classList.toggle("hide",v==="tech"||v==="progress");
+  ["read","ear","sing","progress","tech","excerpt"].forEach(k=>document.getElementById("view-"+k).classList.toggle("hide",k!==v));
+  document.getElementById("clefRow").classList.toggle("hide",!(v==="read"||v==="ear"||v==="sing"||v==="excerpt"));
+  document.getElementById("footNote").classList.toggle("hide",v==="tech"||v==="progress"||v==="excerpt");
   document.getElementById("viewTitle").textContent=TITLES[v][0];
   document.getElementById("viewSub").textContent=TITLES[v][1];
   if(v==="ear")newQuiz();
   if(v==="sing")updateSingTarget();
   if(v==="progress")renderProgress();
   if(v==="tech")renderTech();
+  if(v==="excerpt"){renderExcStaff();updateExcReadout();renderMelody();syncTempoSeg();}
 }
 document.querySelectorAll("#bottomNav button").forEach(b=>b.onclick=()=>switchView(b.dataset.view));
 
 /* clé */
 document.getElementById("clefSeg").querySelectorAll("button").forEach(b=>{
   b.onclick=()=>{document.getElementById("clefSeg").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed","false"));
-    b.setAttribute("aria-pressed","true");state.clef=b.dataset.clef;buildNotes();renderStaff();updateReadout();updateSingTarget();
+    b.setAttribute("aria-pressed","true");state.clef=b.dataset.clef;buildNotes();renderStaff();updateReadout();updateSingTarget();renderExcStaff();updateExcReadout();
     if(state.droneOn)startDrone(singTargetMidi());
     if(!document.getElementById("view-ear").classList.contains("hide"))newQuiz();};
 });
@@ -916,6 +1139,22 @@ document.getElementById("swDrone").onclick=function(){
 };
 document.getElementById("micBtn").onclick=startMic;
 document.getElementById("evalBtn").onclick=evaluate;
+/* extrait */
+document.getElementById("excPick").onclick=()=>document.getElementById("excFile").click();
+document.getElementById("excFile").onchange=function(){ if(this.files&&this.files[0]) handleExcFile(this.files[0]); this.value=""; };
+document.getElementById("excRemove").onclick=removeExcImg;
+document.getElementById("excPrev").onclick=()=>excGo(-1);
+document.getElementById("excNext").onclick=()=>excGo(1);
+document.getElementById("svgExc").onclick=excStaffClick;
+document.getElementById("excHear").onclick=()=>playNote(excCursorMidi());
+document.getElementById("excAdd").onclick=excAdd;
+document.getElementById("excDel").onclick=excDelLast;
+document.getElementById("excClear").onclick=excClear;
+document.getElementById("loopBtn").onclick=toggleLoop;
+document.getElementById("trainBtn").onclick=toggleTrain;
+document.getElementById("tempoSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ excerpt.tempo=b.dataset.tempo; saveExcerpt(); syncTempoSeg(); };
+});
 /* progrès */
 document.getElementById("resetBtn").onclick=function(){
   prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[]};
@@ -931,7 +1170,7 @@ document.addEventListener("keydown",e=>{
 });
 
 /* init */
-load(); loadSettings(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
+load(); loadSettings(); loadExcerpt(); loadExcerptImg(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
 document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
 </script>
 
