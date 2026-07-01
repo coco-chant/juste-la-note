@@ -330,6 +330,11 @@
     <div id="excError" class="notice hide" style="margin-top:8px;"></div>
     <div id="excImgBox" class="hide" style="margin-top:8px;">
       <div class="sheet" style="padding:6px;"><img id="excImg" alt="Extrait de partition importé"></div>
+      <div id="excPageNav" class="hide" style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:8px;">
+        <button class="nav-btn" id="excPrevPage" aria-label="page précédente">◀</button>
+        <span class="notemeta" id="excPageLbl" style="min-width:96px;text-align:center;"></span>
+        <button class="nav-btn" id="excNextPage" aria-label="page suivante">▶</button>
+      </div>
       <button class="ghost-btn" id="excRemove" style="margin-top:8px;">Retirer l'image</button>
     </div>
 
@@ -392,8 +397,13 @@
 
   <!-- TECHNIQUE -->
   <section id="view-tech" class="hide">
-    <p class="sub">Exercices de chant lyrique, du souffle au passaggio. Échauffez-vous toujours du grave vers l'aigu, sans forcer. Une gêne, une douleur ou un enrouement = on arrête.</p>
+    <div class="seg" id="techSeg">
+      <button data-tab="exos" aria-pressed="true">Exercices<small>pratique vocale</small></button>
+      <button data-tab="savoir" aria-pressed="false">Connaissances<small>solfège, voix, histoire</small></button>
+    </div>
+    <p class="sub" id="techIntro">Exercices de chant lyrique, du souffle au passaggio. Échauffez-vous toujours du grave vers l'aigu, sans forcer. Une gêne, une douleur ou un enrouement = on arrête.</p>
     <div id="techList" style="display:flex;flex-direction:column;gap:10px;"></div>
+    <div id="knowList" class="hide" style="display:flex;flex-direction:column;gap:10px;"></div>
   </section>
 
   <footer id="footNote">Son « voix » synthétisé pour rester proche de ce que vous chantez.</footer>
@@ -405,7 +415,7 @@
   <button data-view="sing"><span class="ni">🎙️</span>Chanter</button>
   <button data-view="excerpt"><span class="ni">🎼</span>Extrait</button>
   <button data-view="progress"><span class="ni">🏅</span>Progrès</button>
-  <button data-view="tech"><span class="ni">📖</span>Technique</button>
+  <button data-view="tech"><span class="ni">📖</span>Savoirs</button>
 </nav>
 
 <script>
@@ -812,7 +822,10 @@ function saveExcerpt(){try{localStorage.setItem("justenote_excerpt",JSON.stringi
 
 /* --- Image de référence (réduite puis conservée localement) --- */
 function showExcImg(dataURL){document.getElementById("excImg").src=dataURL;document.getElementById("excImgBox").classList.remove("hide");}
-function loadExcerptImg(){try{const d=localStorage.getItem("justenote_excerpt_img");if(d)showExcImg(d);}catch(e){}}
+function loadExcerptImg(){
+  try{const d=localStorage.getItem("justenote_excerpt_img");if(d)showExcImg(d);}catch(e){}
+  try{const p=localStorage.getItem("justenote_excerpt_pdf");if(p)reopenPdf(p);}catch(e){} // réactive la navigation si un PDF est conservé
+}
 // Conserve l'extrait localement (avec message si la mémoire du navigateur est pleine).
 function storeExcImg(data){
   const err=document.getElementById("excError");
@@ -830,11 +843,15 @@ function canvasToJPEG(cv,max,q){
 // Aiguille selon le type de fichier : PDF ou image.
 function handleExcFile(file){
   const err=document.getElementById("excError"); err.className="notice hide"; err.textContent="";
-  if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){ renderPdfFirstPage(file); return; }
+  if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){ importPdf(file); return; }
   const reader=new FileReader();
   reader.onload=e=>{
     const img=new Image();
     img.onload=()=>{
+      // On importe une photo : on efface un éventuel PDF précédent (et sa navigation).
+      excPdf=null; excPdfCount=0; excPdfPage=1; delete excerpt.pdfPage;
+      try{ localStorage.removeItem("justenote_excerpt_pdf"); }catch(x){}
+      updatePageNav();
       const cv=document.createElement("canvas"); cv.width=img.width; cv.height=img.height;
       cv.getContext("2d").drawImage(img,0,0);
       let data; try{ data=canvasToJPEG(cv,1200,0.75); }catch(x){ data=e.target.result; }
@@ -867,27 +884,70 @@ function loadPdfJs(){
   });
   return pdfjsReady;
 }
-async function renderPdfFirstPage(file){
+// Document PDF gardé en mémoire pour la navigation page à page.
+let excPdf=null, excPdfPage=1, excPdfCount=0;
+// Garde-fou : si une étape dépasse le délai donné, on abandonne proprement.
+const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),ms))]);
+function updatePageNav(){
+  const nav=document.getElementById("excPageNav");
+  if(excPdf && excPdfCount>1){ nav.classList.remove("hide"); document.getElementById("excPageLbl").textContent=`Page ${excPdfPage} / ${excPdfCount}`; }
+  else nav.classList.add("hide");
+}
+// Rend la page n du PDF courant en image (affichée + conservée).
+async function renderPdfPage(n){
+  if(!excPdf) return;
   const err=document.getElementById("excError");
-  err.className="notice info"; err.textContent="Lecture du PDF…";
-  // Garde-fou : si le traitement dépasse 20 s, on abandonne proprement.
-  const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),ms))]);
+  excPdfPage=Math.max(1,Math.min(excPdfCount,n));
   try{
-    await withTimeout(loadPdfJs(),20000);
-    const buf=await file.arrayBuffer();
-    const pdf=await withTimeout(pdfjsLib.getDocument({data:buf}).promise,20000);
-    const page=await pdf.getPage(1);
-    const vp=page.getViewport({scale:2});                 // scale 2 = bonne netteté
+    const page=await excPdf.getPage(excPdfPage);
+    const vp=page.getViewport({scale:2});
     const cv=document.createElement("canvas"); cv.width=Math.ceil(vp.width); cv.height=Math.ceil(vp.height);
     await withTimeout(page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise,20000);
     storeExcImg(canvasToJPEG(cv,1400,0.8));
-    if(pdf.numPages>1){ err.className="notice info"; err.textContent="PDF importé — page 1 sur "+pdf.numPages+" (seule la 1re page est utilisée)."; }
-    else { err.className="notice hide"; err.textContent=""; }
+    excerpt.pdfPage=excPdfPage; saveExcerpt();
+    if((err.textContent||"").startsWith("Lecture")){ err.className="notice hide"; err.textContent=""; }
+    updatePageNav();
+  }catch(e){ err.className="notice"; err.textContent="Rendu de la page impossible. Réessayez, ou importez une capture d'écran en photo."; }
+}
+// Conversions pour conserver/rouvrir le PDF depuis le stockage local.
+function blobToDataURL(blob){ return new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(blob); }); }
+function dataURLToArrayBuffer(d){ const b=atob(d.split(",")[1]); const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i); return u.buffer; }
+async function importPdf(file){
+  const err=document.getElementById("excError");
+  err.className="notice info"; err.textContent="Lecture du PDF…";
+  try{
+    await withTimeout(loadPdfJs(),20000);
+    const buf=await file.arrayBuffer();
+    excPdf=await withTimeout(pdfjsLib.getDocument({data:buf.slice(0)}).promise,20000); // copie (getDocument « vide » le buffer)
+    excPdfCount=excPdf.numPages; excPdfPage=1;
+    // On tente de conserver le PDF pour pouvoir renaviguer après réouverture de l'app.
+    try{ const d=await blobToDataURL(new Blob([buf],{type:"application/pdf"})); if(d) localStorage.setItem("justenote_excerpt_pdf",d); }
+    catch(e){ try{localStorage.removeItem("justenote_excerpt_pdf");}catch(_){} }
+    await renderPdfPage(1);
   }catch(e){
+    excPdf=null; excPdfCount=0;
     err.className="notice"; err.textContent="Impossible de lire ce PDF ici. Une connexion internet est nécessaire la première fois (outil PDF) ; sinon, faites une capture d'écran de la page et importez-la en photo.";
   }
 }
-function removeExcImg(){ try{localStorage.removeItem("justenote_excerpt_img");}catch(e){} document.getElementById("excImgBox").classList.add("hide"); document.getElementById("excImg").removeAttribute("src"); }
+// À la réouverture de l'app : si un PDF est stocké, on le rouvre pour réactiver la navigation.
+async function reopenPdf(dataURL){
+  try{
+    await loadPdfJs();
+    excPdf=await pdfjsLib.getDocument({data:dataURLToArrayBuffer(dataURL)}).promise;
+    excPdfCount=excPdf.numPages;
+    excPdfPage=Math.max(1,Math.min(excPdfCount,excerpt.pdfPage||1));
+    updatePageNav();
+    if(!localStorage.getItem("justenote_excerpt_img")) renderPdfPage(excPdfPage);
+  }catch(e){ /* hors-ligne : on garde l'image affichée, navigation indisponible */ }
+}
+function removeExcImg(){
+  try{ localStorage.removeItem("justenote_excerpt_img"); localStorage.removeItem("justenote_excerpt_pdf"); }catch(e){}
+  delete excerpt.pdfPage; saveExcerpt();
+  excPdf=null; excPdfCount=0; excPdfPage=1;
+  document.getElementById("excImgBox").classList.add("hide");
+  document.getElementById("excImg").removeAttribute("src");
+  updatePageNav();
+}
 
 /* --- Saisie de la mélodie via la portée (respecte la clé et le décalage ténor) --- */
 function excCursorMidi(){const n=state.notes[state.excIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+c.shift;}
@@ -1117,16 +1177,49 @@ const TECH=[
     {h:"Écouter les signaux",g:"Ne jamais forcer",p:"Enrouement, picotement, fatigue qui s'installe : ce sont des signaux d'arrêt. Une gêne persistante ou une extinction de voix répétée mérite l'avis d'un phoniatre ou d'un ORL."}
   ]}
 ];
-function renderTech(){
-  const list=document.getElementById("techList");list.innerHTML="";
-  TECH.forEach((cat,i)=>{
+/* ---- Connaissances (cours) : même structure que TECH ; "g" (but/à retenir) est facultatif. ---- */
+const KNOW=[
+  {ic:"🎼",t:"Solfège essentiel",s:"Lire et comprendre une partition",ex:[
+    {h:"La portée et les clés",p:"La portée a 5 lignes et 4 interlignes. La clé fixe la hauteur : clé de sol (aigus, voix de femmes et ténors), clé de fa (graves, barytons et basses). La clé de sol « octaviée » (avec un petit 8) est celle des ténors : la note écrite sonne une octave plus bas."},
+    {h:"Ton et demi-ton",p:"Le demi-ton est le plus petit écart entre deux notes voisines (Mi–Fa, Si–Do). Un ton = deux demi-tons. La gamme majeure suit toujours l'échelle ton–ton–½–ton–ton–ton–½ (Do majeur : Do Ré Mi Fa Sol La Si Do)."},
+    {h:"Les altérations",p:"Le dièse (♯) monte la note d'un demi-ton, le bémol (♭) la baisse d'un demi-ton, le bécarre (♮) annule l'altération. Do♯ et Ré♭ sonnent pareil : ce sont des « enharmonies »."},
+    {h:"Les durées",p:"La ronde vaut 4 temps, la blanche 2, la noire 1, la croche ½, la double-croche ¼. Un point après la note ajoute la moitié de sa durée. Chaque silence a son symbole (pause, demi-pause, soupir…)."}
+  ]},
+  {ic:"📏",t:"Les intervalles",s:"Mesurer l'écart entre deux notes",ex:[
+    {h:"Qu'est-ce qu'un intervalle ?",p:"C'est l'écart de hauteur entre deux notes, nommé par un chiffre (nombre de degrés : seconde, tierce, quarte…) et une qualité (majeur, mineur, juste…). Exemple : Do→Mi = tierce majeure (4 demi-tons)."},
+    {h:"Jusqu'à l'octave (en demi-tons)",p:"Seconde mineure (1), seconde majeure (2), tierce mineure (3), tierce majeure (4), quarte juste (5), triton (6), quinte juste (7), sixte mineure (8), sixte majeure (9), septième mineure (10), septième majeure (11), octave (12)."},
+    {h:"Consonances et dissonances",p:"Les intervalles consonants (octave, quinte, tierces, sixtes) sonnent stables ; les dissonants (secondes, septièmes, triton) créent une tension qui appelle une résolution. C'est le moteur de l'harmonie."},
+    {h:"Reconnaître à l'oreille",g:"Ancrer chaque intervalle par une chanson",p:"Quarte juste = début de « La Marseillaise » ; quinte juste = « Ah vous dirai-je maman » ; octave = « Somewhere over the rainbow » ; tierce majeure = « Au clair de la lune ». Chantez-les pour créer vos repères."}
+  ]},
+  {ic:"🎚️",t:"Voix & tessitures",s:"Types de voix et étendues",ex:[
+    {h:"Les grandes catégories",p:"Voix de femmes : soprano (aiguë), mezzo-soprano (médium), alto/contralto (grave). Voix d'hommes : ténor (aiguë), baryton (médium), basse (grave). Le contre-ténor chante l'aigu en voix de tête."},
+    {h:"Ténor et baryton",p:"Le ténor est la voix d'homme la plus aiguë ; le baryton sonne plus grave et plus rond, une à deux notes plus bas en confort. Beaucoup d'hommes sont entre les deux : c'est le confort et la couleur, pas seulement les notes extrêmes, qui décident."},
+    {h:"Tessiture ≠ étendue",p:"L'étendue = toutes les notes que vous pouvez produire, même difficilement. La tessiture = la zone où la voix est confortable, juste et sonore. On travaille d'abord la tessiture, on élargit l'étendue avec prudence."},
+    {h:"Le passaggio",p:"Zone de transition entre voix de poitrine et voix de tête. Chez le ténor elle se situe souvent autour du passage mi–sol au-dessus du do central, un peu plus bas chez le baryton. La franchir en douceur, en « couvrant » le son, est une clé du chant lyrique."}
+  ]},
+  {ic:"🎶",t:"Hauteur, fréquence, diapason",s:"Ce que mesure vraiment l'app",ex:[
+    {h:"Hauteur et fréquence",p:"Une note correspond à une fréquence de vibration, en hertz (Hz) : plus c'est haut, plus la fréquence est grande. La référence internationale est le La du diapason à 440 Hz ; certains orchestres montent à 442 Hz."},
+    {h:"Octaves et notation",p:"Monter d'une octave double la fréquence (La 440 → La 880). On situe une note par son numéro d'octave. L'app utilise la notation scientifique : le do central est Do4 (C4). La notation française le nomme parfois Do3 — d'où des différences d'un chiffre selon les méthodes."},
+    {h:"Les cents",p:"Pour mesurer finement la justesse, on divise le demi-ton en 100 « cents ». À ±10 cents de la cible, c'est très juste ; au-delà d'environ 30 cents, l'oreille perçoit un défaut. C'est exactement ce que mesurent l'accordeur et le score de l'app."}
+  ]},
+  {ic:"📜",t:"Histoire du chant",s:"Quelques repères",ex:[
+    {h:"Le chant grégorien",p:"Au Moyen Âge, le chant liturgique est monodique (une seule ligne, sans accompagnement) et en latin. De cette tradition est née l'écriture musicale occidentale (les neumes, ancêtres des notes)."},
+    {h:"La polyphonie",p:"À partir des XIIᵉ–XIIIᵉ siècles (école de Notre-Dame), puis à la Renaissance, plusieurs voix se superposent. L'art du contrepoint se développe : des mélodies indépendantes s'entremêlent harmonieusement."},
+    {h:"La naissance de l'opéra",p:"Vers 1600, à Florence, la Camerata invente un chant « parlé-chanté » au service du texte : l'opéra. Monteverdi en est l'un des premiers grands maîtres avec « L'Orfeo » (1607)."},
+    {h:"Le bel canto et après",p:"Aux XVIIIᵉ–XIXᵉ siècles, le « bel canto » (« beau chant » italien) met en avant la beauté du son, la ligne et la virtuosité (Rossini, Bellini, Donizetti). La technique lyrique moderne en descend directement."}
+  ]}
+];
+function renderAccordions(listEl,data){
+  listEl.innerHTML="";
+  data.forEach(cat=>{
     const wrap=document.createElement("div");wrap.className="acc";
-    let body=cat.ex.map(e=>`<div class="ex"><h4>${e.h}</h4><p>${e.p}</p><div class="goal">But : ${e.g}</div></div>`).join("");
+    const body=cat.ex.map(e=>`<div class="ex"><h4>${e.h}</h4><p>${e.p}</p>${e.g?`<div class="goal">But : ${e.g}</div>`:""}</div>`).join("");
     wrap.innerHTML=`<div class="acc-head"><div class="acc-ic">${cat.ic}</div><div class="acc-tt">${cat.t}<small>${cat.s}</small></div><div class="acc-chev">▶</div></div><div class="acc-body">${body}</div>`;
     wrap.querySelector(".acc-head").onclick=()=>wrap.classList.toggle("open");
-    list.appendChild(wrap);
+    listEl.appendChild(wrap);
   });
 }
+function renderTech(){ renderAccordions(document.getElementById("techList"),TECH); renderAccordions(document.getElementById("knowList"),KNOW); }
 
 /* ================= NAVIGATION ================= */
 const TITLES={
@@ -1134,7 +1227,7 @@ const TITLES={
   ear:["Entraînement d'oreille","On joue une note : chantez-la, puis reconnaissez-la."],
   sing:["Chantez juste","Le micro vous écoute et vous corrige en temps réel."],
   progress:["Vos progrès","Niveaux, séries et récompenses gagnés au fil des séances."],
-  tech:["Technique lyrique","Exercices de souffle, de placement et de passaggio."],
+  tech:["Techniques & connaissances","Exercices pratiques et notions de solfège, de voix et d'histoire du chant."],
   excerpt:["Votre extrait","Importez, saisissez la mélodie, puis travaillez-la en boucle."]
 };
 function switchView(v){
@@ -1153,7 +1246,7 @@ function switchView(v){
   if(v==="sing")updateSingTarget();
   if(v==="progress")renderProgress();
   if(v==="tech")renderTech();
-  if(v==="excerpt"){renderExcStaff();updateExcReadout();renderMelody();syncTempoSeg();}
+  if(v==="excerpt"){renderExcStaff();updateExcReadout();renderMelody();syncTempoSeg();updatePageNav();}
 }
 document.querySelectorAll("#bottomNav button").forEach(b=>b.onclick=()=>switchView(b.dataset.view));
 
@@ -1196,6 +1289,8 @@ document.getElementById("evalBtn").onclick=evaluate;
 document.getElementById("excPick").onclick=()=>document.getElementById("excFile").click();
 document.getElementById("excFile").onchange=function(){ if(this.files&&this.files[0]) handleExcFile(this.files[0]); this.value=""; };
 document.getElementById("excRemove").onclick=removeExcImg;
+document.getElementById("excPrevPage").onclick=()=>renderPdfPage(excPdfPage-1);
+document.getElementById("excNextPage").onclick=()=>renderPdfPage(excPdfPage+1);
 document.getElementById("excPrev").onclick=()=>excGo(-1);
 document.getElementById("excNext").onclick=()=>excGo(1);
 document.getElementById("svgExc").onclick=excStaffClick;
@@ -1207,6 +1302,18 @@ document.getElementById("loopBtn").onclick=toggleLoop;
 document.getElementById("trainBtn").onclick=toggleTrain;
 document.getElementById("tempoSeg").querySelectorAll("button").forEach(b=>{
   b.onclick=()=>{ excerpt.tempo=b.dataset.tempo; saveExcerpt(); syncTempoSeg(); };
+});
+/* techniques & connaissances : bascule Exercices / Connaissances */
+document.getElementById("techSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{
+    document.getElementById("techSeg").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b?"true":"false"));
+    const savoir=b.dataset.tab==="savoir";
+    document.getElementById("techList").classList.toggle("hide",savoir);
+    document.getElementById("knowList").classList.toggle("hide",!savoir);
+    document.getElementById("techIntro").textContent = savoir
+      ? "Notions clés pour progresser : solfège, intervalles, voix et tessitures, hauteur, et un survol de l'histoire du chant."
+      : "Exercices de chant lyrique, du souffle au passaggio. Échauffez-vous toujours du grave vers l'aigu, sans forcer. Une gêne, une douleur ou un enrouement = on arrête.";
+  };
 });
 /* progrès */
 document.getElementById("resetBtn").onclick=function(){
