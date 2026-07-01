@@ -325,8 +325,8 @@
 
   <!-- EXTRAIT (import + saisie mélodie + boucle) -->
   <section id="view-excerpt" class="hide">
-    <input type="file" id="excFile" accept="image/*" style="display:none">
-    <button class="ghost-btn" id="excPick" style="width:100%;"><span>🖼️</span> Choisir un extrait (photo)</button>
+    <input type="file" id="excFile" accept="image/*,application/pdf,.pdf" style="display:none">
+    <button class="ghost-btn" id="excPick" style="width:100%;"><span>🖼️</span> Choisir un extrait (photo ou PDF)</button>
     <div id="excError" class="notice hide" style="margin-top:8px;"></div>
     <div id="excImgBox" class="hide" style="margin-top:8px;">
       <div class="sheet" style="padding:6px;"><img id="excImg" alt="Extrait de partition importé"></div>
@@ -813,26 +813,79 @@ function saveExcerpt(){try{localStorage.setItem("justenote_excerpt",JSON.stringi
 /* --- Image de référence (réduite puis conservée localement) --- */
 function showExcImg(dataURL){document.getElementById("excImg").src=dataURL;document.getElementById("excImgBox").classList.remove("hide");}
 function loadExcerptImg(){try{const d=localStorage.getItem("justenote_excerpt_img");if(d)showExcImg(d);}catch(e){}}
+// Conserve l'extrait localement (avec message si la mémoire du navigateur est pleine).
+function storeExcImg(data){
+  const err=document.getElementById("excError");
+  try{ localStorage.setItem("justenote_excerpt_img",data); }
+  catch(x){ err.className="notice"; err.textContent="Extrait affiché, mais trop lourd pour être conservé à la fermeture."; }
+  showExcImg(data);
+}
+// Réduit un canvas à "max" px sur son plus grand côté, puis renvoie un JPEG (data URL).
+function canvasToJPEG(cv,max,q){
+  const sc=Math.min(1,max/Math.max(cv.width,cv.height));
+  if(sc<1){ const o=document.createElement("canvas"); o.width=Math.round(cv.width*sc); o.height=Math.round(cv.height*sc);
+    o.getContext("2d").drawImage(cv,0,0,o.width,o.height); cv=o; }
+  return cv.toDataURL("image/jpeg",q||0.8);
+}
+// Aiguille selon le type de fichier : PDF ou image.
 function handleExcFile(file){
-  const err=document.getElementById("excError"); err.classList.add("hide"); err.textContent="";
+  const err=document.getElementById("excError"); err.className="notice hide"; err.textContent="";
+  if(file.type==="application/pdf" || /\.pdf$/i.test(file.name)){ renderPdfFirstPage(file); return; }
   const reader=new FileReader();
   reader.onload=e=>{
     const img=new Image();
     img.onload=()=>{
-      // On réduit l'image pour qu'elle tienne dans la mémoire du navigateur.
-      const max=1200, sc=Math.min(1,max/Math.max(img.width,img.height));
-      const w=Math.round(img.width*sc), h=Math.round(img.height*sc);
-      const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
-      cv.getContext("2d").drawImage(img,0,0,w,h);
-      let data; try{ data=cv.toDataURL("image/jpeg",0.75); }catch(x){ data=e.target.result; }
-      try{ localStorage.setItem("justenote_excerpt_img",data); }
-      catch(x){ err.textContent="Image affichée, mais trop lourde pour être conservée à la fermeture."; err.classList.remove("hide"); }
-      showExcImg(data);
+      const cv=document.createElement("canvas"); cv.width=img.width; cv.height=img.height;
+      cv.getContext("2d").drawImage(img,0,0);
+      let data; try{ data=canvasToJPEG(cv,1200,0.75); }catch(x){ data=e.target.result; }
+      storeExcImg(data);
     };
-    img.onerror=()=>{ err.textContent="Image non reconnue (format HEIC de l'iPhone ?). Essayez une capture d'écran, ou un JPEG/PNG."; err.classList.remove("hide"); };
+    img.onerror=()=>{ err.className="notice"; err.textContent="Image non reconnue (format HEIC de l'iPhone ?). Essayez une capture d'écran, ou un JPEG/PNG."; };
     img.src=e.target.result;
   };
   reader.readAsDataURL(file);
+}
+/* --- PDF : on charge l'outil pdf.js à la demande, puis on rend la 1re page en image. --- */
+let pdfjsReady=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(pdfjsReady) return pdfjsReady;
+  pdfjsReady=new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload=async()=>{
+      // Le worker distant (cross-origine) est interdit et fige le rendu :
+      // on le récupère et on le charge en local via un blob (même origine).
+      try{
+        const w=await fetch("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js").then(r=>r.text());
+        pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([w],{type:"application/javascript"}));
+      }catch(e){ pdfjsLib.GlobalWorkerOptions.workerSrc=""; } // repli : worker "simulé" sur le fil principal
+      resolve();
+    };
+    s.onerror=()=>{ pdfjsReady=null; reject(new Error("cdn")); };
+    document.head.appendChild(s);
+  });
+  return pdfjsReady;
+}
+async function renderPdfFirstPage(file){
+  const err=document.getElementById("excError");
+  err.className="notice info"; err.textContent="Lecture du PDF…";
+  // Garde-fou : si le traitement dépasse 20 s, on abandonne proprement.
+  const withTimeout=(p,ms)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),ms))]);
+  try{
+    await withTimeout(loadPdfJs(),20000);
+    const buf=await file.arrayBuffer();
+    const pdf=await withTimeout(pdfjsLib.getDocument({data:buf}).promise,20000);
+    const page=await pdf.getPage(1);
+    const vp=page.getViewport({scale:2});                 // scale 2 = bonne netteté
+    const cv=document.createElement("canvas"); cv.width=Math.ceil(vp.width); cv.height=Math.ceil(vp.height);
+    await withTimeout(page.render({canvasContext:cv.getContext("2d"),viewport:vp}).promise,20000);
+    storeExcImg(canvasToJPEG(cv,1400,0.8));
+    if(pdf.numPages>1){ err.className="notice info"; err.textContent="PDF importé — page 1 sur "+pdf.numPages+" (seule la 1re page est utilisée)."; }
+    else { err.className="notice hide"; err.textContent=""; }
+  }catch(e){
+    err.className="notice"; err.textContent="Impossible de lire ce PDF ici. Une connexion internet est nécessaire la première fois (outil PDF) ; sinon, faites une capture d'écran de la page et importez-la en photo.";
+  }
 }
 function removeExcImg(){ try{localStorage.removeItem("justenote_excerpt_img");}catch(e){} document.getElementById("excImgBox").classList.add("hide"); document.getElementById("excImg").removeAttribute("src"); }
 
