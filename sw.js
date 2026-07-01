@@ -3,7 +3,7 @@
    une copie locale ("cache") des fichiers. Quand on met l'app à jour,
    il suffit de changer le numéro de version ci-dessous. */
 
-const CACHE = "justenote-v1";
+const CACHE = "justenote-v2";
 
 // Fichiers qui composent l'app ("app shell").
 const ASSETS = [

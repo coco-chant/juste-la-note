@@ -247,6 +247,11 @@
 
   <!-- OREILLE -->
   <section id="view-ear" class="hide">
+    <div class="seg" id="lvlSeg">
+      <button data-lvl="easy" aria-pressed="false">Facile<small>4 choix espacés</small></button>
+      <button data-lvl="medium" aria-pressed="true">Moyen<small>4 choix</small></button>
+      <button data-lvl="hard" aria-pressed="false">Difficile<small>6 choix voisins</small></button>
+    </div>
     <div class="card">
       <p class="q" id="quizQ">Écoutez, chantez, puis choisissez la note.</p>
       <button class="play" id="playQuiz" style="margin:0 auto 16px;max-width:230px;"><span>♪</span> Rejouer</button>
@@ -268,6 +273,12 @@
       <button class="nav-btn" id="singPrev" aria-label="cible précédente">◀</button>
       <button class="play secondary" id="singHear"><span>♪</span> Écouter la cible</button>
       <button class="nav-btn" id="singNext" aria-label="cible suivante">▶</button>
+    </div>
+
+    <div class="opts">
+      <div class="opt"><div><div>Bourdon de référence</div>
+        <div class="hint">La note cible tenue, pour se caler dessus — au casque de préférence</div></div>
+        <button class="switch" id="swDrone" aria-pressed="false" role="switch" aria-label="Bourdon de référence"></button></div>
     </div>
 
     <div id="micGate">
@@ -346,6 +357,37 @@ function playNote(midi,dur){
   master.gain.linearRampToValueAtTime(0.0001,t0+dur);
 }
 
+/* ---- Bourdon (note tenue de référence) ----
+   Contrairement à playNote (durée fixe de 1,4 s), le bourdon sonne en continu,
+   doucement, jusqu'à ce qu'on l'arrête. Sert à « se caler » sur la note cible. */
+let drone={nodes:null};
+function startDrone(midi){
+  stopDrone();                                   // on repart toujours propre
+  const ctx=ac(),f=midiToFreq(midi),t0=ctx.currentTime;
+  const master=ctx.createGain(); master.gain.value=0; master.connect(ctx.destination);
+  // léger vibrato, plus discret que pour une note jouée
+  const vib=ctx.createOscillator(),vibGain=ctx.createGain();
+  vib.frequency.value=5.0; vibGain.gain.value=f*0.004; vib.connect(vibGain); vib.start(t0);
+  const oscs=[vib];
+  // fondamentale + quelques harmoniques atténuées, pour un timbre chaud
+  [[1,1],[2,0.26],[3,0.10]].forEach(([mult,amp])=>{
+    const o=ctx.createOscillator(); o.type="sine"; o.frequency.value=f*mult; vibGain.connect(o.frequency);
+    const g=ctx.createGain(); g.gain.value=amp; o.connect(g); g.connect(master); o.start(t0); oscs.push(o);
+  });
+  master.gain.setValueAtTime(0,t0);
+  master.gain.linearRampToValueAtTime(0.13,t0+0.3);   // fondu d'entrée doux (volume modéré)
+  drone.nodes={master,oscs};
+}
+function stopDrone(){
+  if(!drone.nodes) return;
+  const ctx=ac(),t0=ctx.currentTime,{master,oscs}=drone.nodes;
+  master.gain.cancelScheduledValues(t0);
+  master.gain.setValueAtTime(master.gain.value,t0);
+  master.gain.linearRampToValueAtTime(0.0001,t0+0.25); // fondu de sortie
+  oscs.forEach(o=>{try{o.stop(t0+0.3);}catch(e){}});
+  drone.nodes=null;
+}
+
 /* ================= NOTES ================= */
 const LETTERS=["C","D","E","F","G","A","B"];
 const FR={C:"Do",D:"Ré",E:"Mi",F:"Fa",G:"Sol",A:"La",B:"Si"};
@@ -363,7 +405,11 @@ const CLEFS={
   tenor8:{name:"sol8",bottom:["E",4], range:[["C",4],["A",5]], shift:-12,glyph:"𝄞"},
   bass:  {name:"fa",  bottom:["G",2], range:[["F",2],["E",4]], shift:0,  glyph:"𝄢"}
 };
-let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0};
+let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false};
+/* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
+let settings={quizLevel:"medium"};
+function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
+function saveSettings(){try{localStorage.setItem("justenote_settings",JSON.stringify(settings));}catch(e){}}
 function buildNotes(){
   const c=CLEFS[state.clef],[lo,hi]=c.range;
   const dLo=diatonic(lo[0],lo[1]),dHi=diatonic(hi[0],hi[1]),arr=[];
@@ -411,13 +457,38 @@ function go(d){state.idx=Math.max(0,Math.min(state.notes.length-1,state.idx+d));
 
 /* ================= QUIZ OREILLE ================= */
 let quiz={target:null,answered:false};
+/* Choisit n leurres (autres notes) selon le mode :
+   - "far"    : les plus éloignées de la cible → facile à distinguer
+   - "near"   : les plus proches (voisines)    → difficile
+   - "random" : au hasard                      → intermédiaire */
+function quizDistractors(targetLetter,n,mode){
+  const ti=LETTERS.indexOf(targetLetter);
+  const others=LETTERS.filter(l=>l!==targetLetter);
+  if(mode==="random"){ others.sort(()=>Math.random()-.5); }
+  else{
+    others.sort((a,b)=>Math.abs(LETTERS.indexOf(a)-ti)-Math.abs(LETTERS.indexOf(b)-ti));
+    if(mode==="far") others.reverse();
+  }
+  return others.slice(0,n);
+}
 function newQuiz(){
   const p=state.notes; quiz.target=p[Math.floor(Math.random()*p.length)]; quiz.answered=false;
-  const cl=quiz.target.letter, others=LETTERS.filter(l=>l!==cl).sort(()=>Math.random()-.5).slice(0,3);
+  const lvl=settings.quizLevel;                       // "easy" | "medium" | "hard"
+  const nTotal=lvl==="hard"?6:4;                       // nombre total de propositions
+  const mode=lvl==="easy"?"far":lvl==="hard"?"near":"random";
+  const cl=quiz.target.letter;
+  const others=quizDistractors(cl,nTotal-1,mode);
   const ch=[cl,...others].sort(()=>Math.random()-.5), box=document.getElementById("quizChoices"); box.innerHTML="";
+  // 3 colonnes pour 6 choix (2 rangées nettes), sinon une colonne par choix
+  box.style.gridTemplateColumns=`repeat(${lvl==="hard"?3:ch.length},1fr)`;
   ch.forEach(l=>{const b=document.createElement("button");b.className="choice";b.textContent=state.notation==="fr"?FR[l]:l;b.onclick=()=>answerQuiz(l,b);box.appendChild(b);});
   document.getElementById("quizQ").textContent="Écoutez, chantez, puis choisissez la note.";
   setTimeout(playQuizNote,250);
+}
+/* Met le sélecteur de niveau en accord avec le réglage mémorisé. */
+function syncLevelSeg(){
+  document.getElementById("lvlSeg").querySelectorAll("button").forEach(b=>
+    b.setAttribute("aria-pressed", b.dataset.lvl===settings.quizLevel ? "true":"false"));
 }
 function playQuizNote(){const c=CLEFS[state.clef];playNote(midiOf(quiz.target.letter,quiz.target.oct)+c.shift);}
 function answerQuiz(letter,btn){
@@ -509,6 +580,7 @@ function loopMic(){
 }
 function evaluate(){
   if(!mic.on) return;
+  stopDrone();                 // on coupe le bourdon pendant la mesure : le score doit juger VOTRE voix
   samples=[]; collecting=true;
   document.getElementById("scoreCardBox").innerHTML="";
   const dur=3000,t0=performance.now();
@@ -519,6 +591,7 @@ function evaluate(){
 }
 function finishEval(){
   collecting=false; document.getElementById("countdown").textContent="";
+  if(state.droneOn) startDrone(singTargetMidi());   // on redonne la référence après la mesure
   const framesTotal=Math.round(3000/33), valid=samples.length, coverage=Math.min(1,valid/framesTotal);
   if(valid<8){ document.getElementById("scoreCardBox").innerHTML='<div class="notice info">Je ne vous ai presque pas entendu. Chantez plus fort, plus près du micro, et tenez la voyelle « ah ».</div>'; return; }
   const mean=samples.reduce((a,b)=>a+b,0)/valid;
@@ -568,7 +641,7 @@ function updateSingTarget(){
   if(c.shift){const so=nameFromMidi(midiOf(n.letter,n.oct)+c.shift);document.getElementById("singTargetMeta").textContent=`écrit ${noteLabel(n)}${n.oct} · à chanter : ${so.disp}${so.oct}`;}
   else document.getElementById("singTargetMeta").textContent=`à chanter : ${noteLabel(n)}${n.oct}`;
 }
-function singGo(d){state.singIdx=Math.max(0,Math.min(state.notes.length-1,state.singIdx+d));updateSingTarget();document.getElementById("scoreCardBox").innerHTML="";}
+function singGo(d){state.singIdx=Math.max(0,Math.min(state.notes.length-1,state.singIdx+d));updateSingTarget();if(state.droneOn)startDrone(singTargetMidi());document.getElementById("scoreCardBox").innerHTML="";}
 
 /* ================= PROGRÈS / RÉCOMPENSES ================= */
 const LEVELS=[
@@ -663,6 +736,8 @@ const TITLES={
   tech:["Technique lyrique","Exercices de souffle, de placement et de passaggio."]
 };
 function switchView(v){
+  // En quittant l'onglet Chanter, on coupe le bourdon et on remet l'interrupteur à zéro
+  if(v!=="sing"&&state.droneOn){state.droneOn=false;stopDrone();const sw=document.getElementById("swDrone");if(sw)sw.setAttribute("aria-pressed","false");}
   document.querySelectorAll("#bottomNav button").forEach(b=>b.setAttribute("aria-current",b.dataset.view===v?"true":"false"));
   ["read","ear","sing","progress","tech"].forEach(k=>document.getElementById("view-"+k).classList.toggle("hide",k!==v));
   document.getElementById("clefRow").classList.toggle("hide",!(v==="read"||v==="ear"||v==="sing"));
@@ -680,6 +755,7 @@ document.querySelectorAll("#bottomNav button").forEach(b=>b.onclick=()=>switchVi
 document.getElementById("clefSeg").querySelectorAll("button").forEach(b=>{
   b.onclick=()=>{document.getElementById("clefSeg").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed","false"));
     b.setAttribute("aria-pressed","true");state.clef=b.dataset.clef;buildNotes();renderStaff();updateReadout();updateSingTarget();
+    if(state.droneOn)startDrone(singTargetMidi());
     if(!document.getElementById("view-ear").classList.contains("hide"))newQuiz();};
 });
 /* lire */
@@ -694,10 +770,17 @@ document.getElementById("btnPiano").onclick=function(){const box=document.getEle
 /* oreille */
 document.getElementById("playQuiz").onclick=playQuizNote;
 document.getElementById("quizNext").onclick=newQuiz;
+document.getElementById("lvlSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ settings.quizLevel=b.dataset.lvl; saveSettings(); syncLevelSeg(); newQuiz(); };
+});
 /* chanter */
 document.getElementById("singPrev").onclick=()=>singGo(-1);
 document.getElementById("singNext").onclick=()=>singGo(1);
 document.getElementById("singHear").onclick=()=>playNote(singTargetMidi());
+document.getElementById("swDrone").onclick=function(){
+  state.droneOn=!state.droneOn; this.setAttribute("aria-pressed",state.droneOn);
+  if(state.droneOn) startDrone(singTargetMidi()); else stopDrone();
+};
 document.getElementById("micBtn").onclick=startMic;
 document.getElementById("evalBtn").onclick=evaluate;
 /* progrès */
@@ -715,7 +798,7 @@ document.addEventListener("keydown",e=>{
 });
 
 /* init */
-load(); buildNotes(); renderStaff(); updateReadout();
+load(); loadSettings(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg();
 document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
 </script>
 
