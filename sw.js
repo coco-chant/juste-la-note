@@ -1,9 +1,16 @@
 /* Service worker de "Juste la note".
    Rôle : rendre l'app installable et utilisable hors-ligne en gardant
-   une copie locale ("cache") des fichiers. Quand on met l'app à jour,
-   il suffit de changer le numéro de version ci-dessous. */
+   une copie locale ("cache") des fichiers.
 
-const CACHE = "justenote-v2";
+   Stratégie (importante pour que les mises à jour arrivent vite) :
+   - La PAGE elle-même (index.html) est servie en « RÉSEAU D'ABORD » :
+     tant qu'il y a de la connexion, on affiche toujours la dernière version
+     en ligne ; on ne retombe sur la copie locale que si on est hors-ligne.
+   - Les fichiers annexes (icônes, manifeste) sont servis en « CACHE D'ABORD »
+     (rapides, ils changent rarement).
+   Quand on met l'app à jour, on incrémente le numéro de version ci-dessous. */
+
+const CACHE = "justenote-v3";
 
 // Fichiers qui composent l'app ("app shell").
 const ASSETS = [
@@ -31,11 +38,31 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-// À chaque requête : on sert d'abord depuis le cache (rapide, hors-ligne),
-// et on complète par le réseau si le fichier n'y est pas.
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  const req = event.request;
+  if (req.method !== "GET") return;
+
+  // Est-ce la page (navigation vers un document HTML) ?
+  const isPage = req.mode === "navigate" || req.destination === "document";
+
+  if (isPage) {
+    // RÉSEAU D'ABORD : on va chercher la dernière version en ligne...
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          // ...et on rafraîchit la copie locale pour le mode hors-ligne.
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put("./index.html", copy));
+          return res;
+        })
+        // Pas de réseau → on sert la dernière copie connue.
+        .catch(() => caches.match("./index.html").then((hit) => hit || caches.match("./")))
+    );
+    return;
+  }
+
+  // Reste des fichiers : CACHE D'ABORD, complété par le réseau si absent.
   event.respondWith(
-    caches.match(event.request).then((hit) => hit || fetch(event.request))
+    caches.match(req).then((hit) => hit || fetch(req))
   );
 });
