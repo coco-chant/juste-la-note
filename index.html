@@ -442,15 +442,15 @@ function getOutput(){
   const ctx=ac();
   if(!outNode){
     const comp=ctx.createDynamicsCompressor();
-    comp.threshold.value=-6;   // n'agit que sur les sons forts ; les sons doux passent inchangés
-    comp.knee.value=6; comp.ratio.value=12; comp.attack.value=0.002; comp.release.value=0.2;
-    comp.connect(ctx.destination);
+    comp.threshold.value=-3; comp.knee.value=6; comp.ratio.value=6; comp.attack.value=0.003; comp.release.value=0.2;
+    const makeup=ctx.createGain(); makeup.gain.value=1.35;   // gain de sortie : monte le volume global
+    comp.connect(makeup); makeup.connect(ctx.destination);
     outNode=comp;
   }
   return outNode;
 }
-function playNote(midi,dur){
-  dur=dur||1.4; const ctx=ac(),t0=ctx.currentTime,f=midiToFreq(midi);
+function playNote(midi,dur,vol){
+  dur=dur||1.4; vol=vol||1; const ctx=ac(),t0=ctx.currentTime,f=midiToFreq(midi);
   const master=ctx.createGain(); master.gain.value=0; master.connect(getOutput());
   const vib=ctx.createOscillator(),vibGain=ctx.createGain();
   vib.frequency.value=5.2; vibGain.gain.value=f*0.006; vib.connect(vibGain); vib.start(t0); vib.stop(t0+dur);
@@ -458,11 +458,11 @@ function playNote(midi,dur){
     const o=ctx.createOscillator(); o.type="sine"; o.frequency.value=f*mult; vibGain.connect(o.frequency);
     const g=ctx.createGain(); g.gain.value=amp; o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dur);
   });
-  const A=0.04,D=0.25,S=0.6,R=0.5;
+  const A=0.04,D=0.25,S=0.6,R=0.5,PK=0.62*vol;          // PK = niveau crête (× volume demandé)
   master.gain.setValueAtTime(0,t0);
-  master.gain.linearRampToValueAtTime(0.5,t0+A);        // niveau plus élevé (le limiteur évite la saturation)
-  master.gain.linearRampToValueAtTime(0.5*S,t0+A+D);
-  master.gain.setValueAtTime(0.5*S,t0+dur-R);
+  master.gain.linearRampToValueAtTime(PK,t0+A);         // niveau relevé (le limiteur évite la saturation)
+  master.gain.linearRampToValueAtTime(PK*S,t0+A+D);
+  master.gain.setValueAtTime(PK*S,t0+dur-R);
   master.gain.linearRampToValueAtTime(0.0001,t0+dur);
 }
 
@@ -565,7 +565,7 @@ function updateReadout(){
   if(c.shift){const so=nameFromMidi(midiOf(n.letter,n.oct)+c.shift);mt.textContent=`écrit ${noteLabel(n)}${n.oct} · sonne ${so.disp}${so.oct}`;}
   else mt.textContent=`${noteLabel(n)}${n.oct}`;
 }
-function soundCurrent(){const n=state.notes[state.idx],c=CLEFS[state.clef];playNote(midiOf(n.letter,n.oct)+c.shift);ringHalo();}
+function soundCurrent(){const n=state.notes[state.idx],c=CLEFS[state.clef];playNote(midiOf(n.letter,n.oct)+c.shift,1.4,1.3);ringHalo();} // onglet Lire : un peu plus fort
 function go(d){state.idx=Math.max(0,Math.min(state.notes.length-1,state.idx+d));renderStaff();updateReadout();if(state.auto)soundCurrent();}
 
 /* ================= QUIZ OREILLE ================= */
