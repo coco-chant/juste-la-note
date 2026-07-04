@@ -44,7 +44,22 @@
   }
   .display{font-family:"Fraunces","Iowan Old Style","Palatino Linotype",Georgia,serif;}
 
-  header{padding:16px 20px 8px;border-bottom:1px solid var(--line);}
+  header{padding:16px 20px 8px;border-bottom:1px solid var(--line);position:relative;}
+  /* menu paramètres */
+  .gear{position:absolute;top:14px;right:16px;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);
+    background:var(--ink-2);color:var(--text);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .gear:active{transform:scale(.94);}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;display:flex;align-items:flex-end;justify-content:center;}
+  .modal.hide{display:none;}
+  .sheet-modal{background:var(--ink-2);border:1px solid var(--line);border-radius:18px 18px 0 0;width:100%;max-width:540px;
+    padding:18px 18px calc(20px + env(safe-area-inset-bottom));max-height:88vh;overflow:auto;}
+  @media (min-width:560px){ .modal{align-items:center;} .sheet-modal{border-radius:18px;} }
+  .set-row{padding:13px 0;border-bottom:1px solid var(--line);}
+  .set-row .sl{font-size:14px;font-weight:600;}
+  .set-row .sh{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4;}
+  .set-row input[type=range]{width:100%;margin-top:11px;accent-color:var(--brass);height:24px;}
+  .set-val{color:var(--brass-soft);font-variant-numeric:tabular-nums;font-weight:400;}
+  body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after{animation-duration:.001ms!important;transition-duration:.001ms!important;}
   .kicker{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--brass);font-weight:600;margin:0 0 4px;}
   h1{margin:0;font-size:23px;font-weight:600;letter-spacing:-.01em;}
   .sub{margin:5px 0 0;color:var(--muted);font-size:12.5px;line-height:1.45;}
@@ -224,6 +239,7 @@
 </head>
 <body>
 <header>
+  <button class="gear" id="openSettings" aria-label="Paramètres">⚙</button>
   <p class="kicker">Coach d'oreille &amp; de voix</p>
   <h1 class="display" id="viewTitle">Juste la note</h1>
   <p class="sub" id="viewSub">Lisez la note, essayez de la chanter, écoutez-la pour vérifier.</p>
@@ -420,6 +436,35 @@
   <footer id="footNote">Son « voix » synthétisé pour rester proche de ce que vous chantez.</footer>
 </main>
 
+<!-- Fenêtre Paramètres (discrète, ouverte par l'engrenage) -->
+<div class="modal hide" id="settingsModal">
+  <div class="sheet-modal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+      <h2 class="display" style="margin:0;font-size:20px;">Paramètres</h2>
+      <button class="nav-btn" id="setClose" aria-label="Fermer" style="width:40px;height:40px;font-size:17px;">✕</button>
+    </div>
+    <div class="set-row">
+      <div class="sl">Volume <span class="set-val" id="volVal"></span></div>
+      <div class="sh">Puissance du son des notes jouées.</div>
+      <input type="range" id="volRange" min="0.3" max="1.6" step="0.05">
+    </div>
+    <div class="set-row">
+      <div class="sl">Diapason <span class="set-val" id="diapVal"></span></div>
+      <div class="sh">Hauteur de référence (le La). Standard : 440 Hz ; beaucoup d'orchestres montent à 442 Hz.</div>
+      <input type="range" id="diapRange" min="432" max="446" step="1">
+    </div>
+    <div class="opt" style="margin-top:13px;">
+      <div><div>Notation</div><div class="hint">Do Ré Mi ou C D E, dans toute l'app</div></div>
+      <button class="ghost-btn" id="setNotation">Do Ré Mi</button>
+    </div>
+    <div class="opt" style="margin-top:9px;">
+      <div><div>Réduire les animations</div><div class="hint">Confort visuel, moins de mouvements</div></div>
+      <button class="switch" id="setReduce" aria-pressed="false" role="switch" aria-label="Réduire les animations"></button>
+    </div>
+    <button class="play" id="setDone" style="margin-top:16px;">Fermer</button>
+  </div>
+</div>
+
 <nav class="bn" id="bottomNav">
   <button data-view="read" aria-current="true"><span class="ni">𝄞</span>Lire</button>
   <button data-view="ear"><span class="ni">👂</span>Oreille</button>
@@ -433,19 +478,20 @@
 /* ================= AUDIO SYNTH ================= */
 let actx=null;
 function ac(){ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==="suspended") actx.resume(); return actx; }
-const midiToFreq = m => 440*Math.pow(2,(m-69)/12);
+const A4 = () => (settings && settings.diapason) || 440;   // diapason réglable (La de référence)
+const midiToFreq = m => A4()*Math.pow(2,(m-69)/12);
 /* Sortie audio commune : un limiteur (compresseur) placé avant le haut-parleur.
    Il laisse passer les sons doux tels quels, mais empêche les pics de saturer :
    on peut donc jouer les notes plus fort sans distorsion. */
-let outNode=null;
+let outNode=null, outGain=null;
 function getOutput(){
   const ctx=ac();
   if(!outNode){
     const comp=ctx.createDynamicsCompressor();
     comp.threshold.value=-3; comp.knee.value=6; comp.ratio.value=6; comp.attack.value=0.003; comp.release.value=0.2;
-    const makeup=ctx.createGain(); makeup.gain.value=1.35;   // gain de sortie : monte le volume global
+    const makeup=ctx.createGain(); makeup.gain.value=1.35*((settings&&settings.volume)||1); // gain de sortie réglable
     comp.connect(makeup); makeup.connect(ctx.destination);
-    outNode=comp;
+    outNode=comp; outGain=makeup;
   }
   return outNode;
 }
@@ -516,7 +562,7 @@ const CLEFS={
 };
 let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false};
 /* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
-let settings={quizLevel:"medium",quizMode:"notes"};
+let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false};
 function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
 function saveSettings(){try{localStorage.setItem("justenote_settings",JSON.stringify(settings));}catch(e){}}
 function buildNotes(){
@@ -750,7 +796,7 @@ function loopMic(){
   if(f<0){ detN.textContent="—"; detH.textContent="écoute…"; needle.style.background="var(--muted)"; needle.style.left="50%"; return; }
   const tMidi=singTargetMidi(),tFreq=midiToFreq(tMidi);
   const cents=1200*Math.log2(f/tFreq);
-  const detMidi=Math.round(69+12*Math.log2(f/440)),dn=nameFromMidi(detMidi);
+  const detMidi=Math.round(69+12*Math.log2(f/A4())),dn=nameFromMidi(detMidi);
   detN.textContent=dn.disp+dn.oct; detH.textContent=f.toFixed(1)+" Hz";
   const clamped=Math.max(-50,Math.min(50,cents)); needle.style.left=(50+clamped)+"%";
   let col="var(--bad)"; if(Math.abs(cents)<=10)col="var(--good)"; else if(Math.abs(cents)<=30)col="var(--warn)";
@@ -1428,8 +1474,7 @@ document.getElementById("nextBtn").onclick=()=>go(1);
 document.getElementById("playRead").onclick=soundCurrent;
 document.getElementById("swReveal").onclick=function(){state.reveal=!state.reveal;this.setAttribute("aria-pressed",state.reveal);updateReadout();};
 document.getElementById("swAuto").onclick=function(){state.auto=!state.auto;this.setAttribute("aria-pressed",state.auto);};
-document.getElementById("btnNotation").onclick=function(){state.notation=state.notation==="fr"?"en":"fr";this.textContent=state.notation==="fr"?"Do Ré Mi":"C D E";
-  updateReadout();updateSingTarget();if(!document.getElementById("view-ear").classList.contains("hide"))newQuiz();buildPiano();};
+document.getElementById("btnNotation").onclick=()=>setNotation(state.notation==="fr"?"en":"fr");
 document.getElementById("btnPiano").onclick=function(){const box=document.getElementById("pianoBox");const show=box.classList.contains("hide");box.classList.toggle("hide");this.textContent=show?"Masquer":"Afficher";if(show)buildPiano();};
 /* oreille */
 document.getElementById("playQuiz").onclick=playQuizNote;
@@ -1494,8 +1539,55 @@ document.addEventListener("keydown",e=>{
   }
 });
 
+/* ================= PARAMÈTRES ================= */
+// Change la notation partout (Do Ré Mi ↔ C D E) et resynchronise l'affichage.
+function setNotation(n){
+  state.notation=n; settings.notation=n; saveSettings();
+  const lbl=n==="fr"?"Do Ré Mi":"C D E";
+  const b1=document.getElementById("btnNotation"); if(b1) b1.textContent=lbl;
+  const b2=document.getElementById("setNotation"); if(b2) b2.textContent=lbl;
+  updateReadout(); updateSingTarget();
+  if(!document.getElementById("view-ear").classList.contains("hide")) newQuiz();
+  buildPiano();
+}
+// Applique les réglages qui agissent en continu (volume de sortie, animations).
+function applySettings(){
+  document.body.classList.toggle("reduce-motion", !!settings.reduceMotion);
+  if(outGain) outGain.gain.value=1.35*(settings.volume||1);
+}
+// Met les contrôles de la fenêtre en accord avec les réglages mémorisés.
+function syncSettingsUI(){
+  const v=document.getElementById("volRange"); v.value=settings.volume; document.getElementById("volVal").textContent=Math.round(settings.volume*100)+"%";
+  const d=document.getElementById("diapRange"); d.value=settings.diapason; document.getElementById("diapVal").textContent=settings.diapason+" Hz";
+  document.getElementById("setNotation").textContent=settings.notation==="fr"?"Do Ré Mi":"C D E";
+  document.getElementById("setReduce").setAttribute("aria-pressed", settings.reduceMotion?"true":"false");
+}
+const settingsModal=document.getElementById("settingsModal");
+function openSettings(){ syncSettingsUI(); settingsModal.classList.remove("hide"); }
+function closeSettings(){ settingsModal.classList.add("hide"); }
+document.getElementById("openSettings").onclick=openSettings;
+document.getElementById("setClose").onclick=closeSettings;
+document.getElementById("setDone").onclick=closeSettings;
+settingsModal.onclick=(e)=>{ if(e.target===settingsModal) closeSettings(); }; // clic sur le fond = fermer
+document.getElementById("volRange").oninput=function(){
+  settings.volume=parseFloat(this.value); document.getElementById("volVal").textContent=Math.round(settings.volume*100)+"%";
+  if(outGain) outGain.gain.value=1.35*settings.volume; saveSettings();
+};
+document.getElementById("diapRange").oninput=function(){
+  settings.diapason=parseInt(this.value,10); document.getElementById("diapVal").textContent=settings.diapason+" Hz"; saveSettings();
+};
+document.getElementById("setNotation").onclick=()=>setNotation(state.notation==="fr"?"en":"fr");
+document.getElementById("setReduce").onclick=function(){
+  settings.reduceMotion=!settings.reduceMotion; this.setAttribute("aria-pressed",settings.reduceMotion);
+  document.body.classList.toggle("reduce-motion",settings.reduceMotion); saveSettings();
+};
+
 /* init */
-load(); loadSettings(); loadExcerpt(); loadExcerptImg(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
+load(); loadSettings();
+state.notation=settings.notation||"fr";                 // notation mémorisée
+document.getElementById("btnNotation").textContent=state.notation==="fr"?"Do Ré Mi":"C D E";
+applySettings();
+loadExcerpt(); loadExcerptImg(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
 document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
 </script>
 
