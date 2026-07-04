@@ -434,9 +434,24 @@
 let actx=null;
 function ac(){ if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==="suspended") actx.resume(); return actx; }
 const midiToFreq = m => 440*Math.pow(2,(m-69)/12);
+/* Sortie audio commune : un limiteur (compresseur) placé avant le haut-parleur.
+   Il laisse passer les sons doux tels quels, mais empêche les pics de saturer :
+   on peut donc jouer les notes plus fort sans distorsion. */
+let outNode=null;
+function getOutput(){
+  const ctx=ac();
+  if(!outNode){
+    const comp=ctx.createDynamicsCompressor();
+    comp.threshold.value=-6;   // n'agit que sur les sons forts ; les sons doux passent inchangés
+    comp.knee.value=6; comp.ratio.value=12; comp.attack.value=0.002; comp.release.value=0.2;
+    comp.connect(ctx.destination);
+    outNode=comp;
+  }
+  return outNode;
+}
 function playNote(midi,dur){
   dur=dur||1.4; const ctx=ac(),t0=ctx.currentTime,f=midiToFreq(midi);
-  const master=ctx.createGain(); master.gain.value=0; master.connect(ctx.destination);
+  const master=ctx.createGain(); master.gain.value=0; master.connect(getOutput());
   const vib=ctx.createOscillator(),vibGain=ctx.createGain();
   vib.frequency.value=5.2; vibGain.gain.value=f*0.006; vib.connect(vibGain); vib.start(t0); vib.stop(t0+dur);
   [[1,1],[2,0.32],[3,0.16],[4,0.07]].forEach(([mult,amp])=>{
@@ -445,9 +460,9 @@ function playNote(midi,dur){
   });
   const A=0.04,D=0.25,S=0.6,R=0.5;
   master.gain.setValueAtTime(0,t0);
-  master.gain.linearRampToValueAtTime(0.22,t0+A);
-  master.gain.linearRampToValueAtTime(0.22*S,t0+A+D);
-  master.gain.setValueAtTime(0.22*S,t0+dur-R);
+  master.gain.linearRampToValueAtTime(0.5,t0+A);        // niveau plus élevé (le limiteur évite la saturation)
+  master.gain.linearRampToValueAtTime(0.5*S,t0+A+D);
+  master.gain.setValueAtTime(0.5*S,t0+dur-R);
   master.gain.linearRampToValueAtTime(0.0001,t0+dur);
 }
 
@@ -458,7 +473,7 @@ let drone={nodes:null};
 function startDrone(midi){
   stopDrone();                                   // on repart toujours propre
   const ctx=ac(),f=midiToFreq(midi),t0=ctx.currentTime;
-  const master=ctx.createGain(); master.gain.value=0; master.connect(ctx.destination);
+  const master=ctx.createGain(); master.gain.value=0; master.connect(getOutput());
   // léger vibrato, plus discret que pour une note jouée
   const vib=ctx.createOscillator(),vibGain=ctx.createGain();
   vib.frequency.value=5.0; vibGain.gain.value=f*0.004; vib.connect(vibGain); vib.start(t0);
