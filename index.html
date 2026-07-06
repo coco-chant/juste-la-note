@@ -397,6 +397,44 @@
     <p class="sub">Vous placez la note comme elle est écrite ; en clé de sol ténor, le son sonne une octave plus bas — c'est pris en compte automatiquement.</p>
   </section>
 
+  <!-- PASSAGGIO (sirène guidée) -->
+  <section id="view-pass" class="hide">
+    <p class="panel-title">Votre voix</p>
+    <div class="seg" id="voiceSeg">
+      <button data-voice="basse">Basse<small>passage vers Do4</small></button>
+      <button data-voice="baryton">Baryton<small>passage vers Mi4</small></button>
+      <button data-voice="tenor" aria-pressed="true">Ténor<small>passage vers Sol4</small></button>
+    </div>
+
+    <div class="card" style="text-align:left;padding:13px 15px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div style="min-width:0;">
+          <div style="font-size:14.5px;font-weight:600;" id="passLvlTitle">Palier 1</div>
+          <div class="hint" id="passLvlMeta"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex:0 0 auto;">
+          <button class="nav-btn" id="passPrev" style="width:42px;height:42px;font-size:15px;" aria-label="palier précédent">◀</button>
+          <button class="nav-btn" id="passNext" style="width:42px;height:42px;font-size:15px;" aria-label="palier suivant">▶</button>
+        </div>
+      </div>
+      <p class="sub" id="passConsigne" style="margin-top:8px;"></p>
+    </div>
+
+    <div class="sheet" style="padding:8px;">
+      <svg id="passSvg" viewBox="0 0 320 190" preserveAspectRatio="none"
+           style="width:100%;height:190px;display:block;" role="img"
+           aria-label="Courbe de la sirène à suivre, avec votre voix tracée par-dessus"></svg>
+    </div>
+    <div class="notemeta" id="passInfo" style="text-align:center;min-height:15px;"></div>
+
+    <button class="play secondary" id="passHear"><span>♪</span> Écouter le modèle</button>
+    <button class="play" id="passSing" style="margin-top:8px;"><span>🎙️</span> Chanter la sirène</button>
+    <div class="countdown" id="passCount"></div>
+    <div id="passResult"></div>
+    <div class="notemeta" id="passProgress" style="text-align:center;"></div>
+    <p class="sub">Volume modéré, sur « ng » ou « ou ». Si ça serre : arrêtez, soufflez, reprenez plus bas. Jamais de douleur.</p>
+  </section>
+
   <!-- PROGRÈS -->
   <section id="view-progress" class="hide">
     <div class="level-hero">
@@ -469,6 +507,7 @@
   <button data-view="read" aria-current="true"><span class="ni">𝄞</span>Lire</button>
   <button data-view="ear"><span class="ni">👂</span>Oreille</button>
   <button data-view="sing"><span class="ni">🎙️</span>Chanter</button>
+  <button data-view="pass"><span class="ni">🌊</span>Passaggio</button>
   <button data-view="excerpt"><span class="ni">🎼</span>Extrait</button>
   <button data-view="progress"><span class="ni">🏅</span>Progrès</button>
   <button data-view="tech"><span class="ni">📖</span>Savoirs</button>
@@ -487,11 +526,14 @@ let outNode=null, outGain=null;
 function getOutput(){
   const ctx=ac();
   if(!outNode){
-    const comp=ctx.createDynamicsCompressor();
-    comp.threshold.value=-3; comp.knee.value=6; comp.ratio.value=6; comp.attack.value=0.003; comp.release.value=0.2;
-    const makeup=ctx.createGain(); makeup.gain.value=1.35*((settings&&settings.volume)||1); // gain de sortie réglable
-    comp.connect(makeup); makeup.connect(ctx.destination);
-    outNode=comp; outGain=makeup;
+    // Ordre important pour la qualité : volume D'ABORD, limiteur EN DERNIER.
+    // Ainsi, même à fort volume, c'est le limiteur qui rabote proprement les crêtes
+    // (réduction de gain douce) au lieu d'un écrêtage numérique qui grésille.
+    const pre=ctx.createGain(); pre.gain.value=1.35*((settings&&settings.volume)||1); // volume réglable
+    const lim=ctx.createDynamicsCompressor();
+    lim.threshold.value=-1; lim.knee.value=0; lim.ratio.value=20; lim.attack.value=0.001; lim.release.value=0.12;
+    pre.connect(lim); lim.connect(ctx.destination);
+    outNode=pre; outGain=pre;
   }
   return outNode;
 }
@@ -500,11 +542,13 @@ function playNote(midi,dur,vol){
   const master=ctx.createGain(); master.gain.value=0; master.connect(getOutput());
   const vib=ctx.createOscillator(),vibGain=ctx.createGain();
   vib.frequency.value=5.2; vibGain.gain.value=f*0.006; vib.connect(vibGain); vib.start(t0); vib.stop(t0+dur);
-  [[1,1],[2,0.32],[3,0.16],[4,0.07]].forEach(([mult,amp])=>{
+  // Harmoniques normalisées (somme = 1) : le timbre reste identique,
+  // mais la somme des oscillateurs ne peut plus dépasser le niveau prévu (pas de saturation interne).
+  [[1,1/1.55],[2,0.32/1.55],[3,0.16/1.55],[4,0.07/1.55]].forEach(([mult,amp])=>{
     const o=ctx.createOscillator(); o.type="sine"; o.frequency.value=f*mult; vibGain.connect(o.frequency);
     const g=ctx.createGain(); g.gain.value=amp; o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dur);
   });
-  const A=0.04,D=0.25,S=0.6,R=0.5,PK=0.62*vol;          // PK = niveau crête (× volume demandé)
+  const A=0.04,D=0.25,S=0.6,R=0.5,PK=0.85*vol;          // PK = niveau crête (× volume demandé)
   master.gain.setValueAtTime(0,t0);
   master.gain.linearRampToValueAtTime(PK,t0+A);         // niveau relevé (le limiteur évite la saturation)
   master.gain.linearRampToValueAtTime(PK*S,t0+A+D);
@@ -525,12 +569,12 @@ function startDrone(midi){
   vib.frequency.value=5.0; vibGain.gain.value=f*0.004; vib.connect(vibGain); vib.start(t0);
   const oscs=[vib];
   // fondamentale + quelques harmoniques atténuées, pour un timbre chaud
-  [[1,1],[2,0.26],[3,0.10]].forEach(([mult,amp])=>{
+  [[1,1/1.36],[2,0.26/1.36],[3,0.10/1.36]].forEach(([mult,amp])=>{ // normalisées (somme = 1)
     const o=ctx.createOscillator(); o.type="sine"; o.frequency.value=f*mult; vibGain.connect(o.frequency);
     const g=ctx.createGain(); g.gain.value=amp; o.connect(g); g.connect(master); o.start(t0); oscs.push(o);
   });
   master.gain.setValueAtTime(0,t0);
-  master.gain.linearRampToValueAtTime(0.13,t0+0.3);   // fondu d'entrée doux (volume modéré)
+  master.gain.linearRampToValueAtTime(0.18,t0+0.3);   // fondu d'entrée doux (volume modéré)
   drone.nodes={master,oscs};
 }
 function stopDrone(){
@@ -562,7 +606,7 @@ const CLEFS={
 };
 let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false};
 /* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
-let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false};
+let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false,voiceType:"tenor"};
 function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
 function saveSettings(){try{localStorage.setItem("justenote_settings",JSON.stringify(settings));}catch(e){}}
 function buildNotes(){
@@ -689,7 +733,7 @@ function answerInterval(semi,btn){
   if(quiz.answered){ playNote(quiz.rootMidi,0.7); setTimeout(()=>playNote(quiz.rootMidi+semi,1.0),650); return; }
   quiz.answered=true;
   const correct=semi===quiz.intervalSemi;
-  if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10);}
+  if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10); unlock("ear25", prog.quizCorrect>=25);}
   else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===intervalName(quiz.intervalSemi))b.classList.add("correct");});}
   prog.quizTotal++; save();
   document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
@@ -714,7 +758,7 @@ function answerQuiz(letter,btn){
   if(quiz.answered){ playNote(midiOf(letter,quiz.target.oct)+CLEFS[state.clef].shift,1.0); return; }
   quiz.answered=true;
   const correct=letter===quiz.target.letter;
-  if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10);}
+  if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10); unlock("ear25", prog.quizCorrect>=25);}
   else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===(state.notation==="fr"?FR[quiz.target.letter]:quiz.target.letter))b.classList.add("correct");});}
   prog.quizTotal++; save();
   document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
@@ -862,8 +906,12 @@ function finishEval(){
   unlock("steady", std<=15 && valid>=12);
   unlock("breath", coverage>=0.9);
   unlock("streak5", prog.streak>=5);
+  unlock("streak10", prog.streak>=10);
+  unlock("perfect", total>=100);
   unlock("range", prog.sungLow&&prog.sungHigh);
   unlock("dozen", prog.evals>=25);
+  unlock("hundred", prog.evals>=100);
+  unlock("days7", practiceStreak()>=7);
   save();
   let msg = meanAbs<=10?"Parfaitement juste":meanAbs<=25?"Juste":meanAbs<=50?"Presque — ajustez la hauteur":"Vérifiez que vous ne chantez pas à l'octave";
   const dir = Math.abs(mean)<8?"":(mean<0?" (tendance un peu basse)":" (tendance un peu haute)");
@@ -1168,6 +1216,7 @@ function trainFinish(){
   document.getElementById("trainBtn").innerHTML="<span>🎙️</span> Recommencer l'entraînement";
   const heard=train.results.filter(r=>r.score!==null);
   const avg=heard.length?Math.round(heard.reduce((a,r)=>a+r.score,0)/heard.length):0;
+  unlock("excerpt1", heard.length>0);   // badge : un entraînement d'extrait mené au bout
   setTrainStatus(heard.length?`Terminé — justesse moyenne ${avg}/100`:"Je ne vous ai presque pas entendu. Rapprochez-vous du micro.");
   document.getElementById("trainSummary").innerHTML=train.results.map(r=>{
     if(r.score===null) return `<span class="mchip miss">${r.name} ✕</span>`;
@@ -1176,23 +1225,224 @@ function trainFinish(){
   }).join("");
 }
 
+/* ================= PASSAGGIO (sirène guidée) =================
+   Principe : une courbe cible en cloche (grave → sommet → grave) s'affiche ;
+   on la chante en glissando pendant que sa propre hauteur se dessine par-dessus.
+   Score = % du temps passé « sur la ligne » (± 60 cents). 3 réussites (≥ 75)
+   débloquent le palier suivant. Progression séparée par type de voix. */
+const PASS_VOICES={
+  basse:  {label:"Basse",  P:60},   // P = note du passage (hauteur réelle, MIDI) : Do4
+  baryton:{label:"Baryton",P:64},   // Mi4
+  tenor:  {label:"Ténor",  P:67}    // Sol4
+};
+/* Paliers : bornes en demi-tons PAR RAPPORT À P, durée (s), nb de cloches. */
+const PASS_LEVELS=[
+  {t:"Éveil",        lo:-14,hi:-7, d:6, c:1, cons:"Loin du passage : une petite sirène confortable pour connecter souffle et voix. Léger, sur « ng », comme un soupir chanté."},
+  {t:"Approche",     lo:-14,hi:-4, d:7, c:1, cons:"On élargit vers le haut, toujours sans forcer. Pensez « espace » dans la gorge en montant, volume constant."},
+  {t:"Aux portes",   lo:-12,hi:-1, d:8, c:1, cons:"Le sommet frôle la zone de passage. Passez sur « ou », volume modéré, et laissez la voix s'alléger en haut."},
+  {t:"La traversée", lo:-12,hi:2,  d:9, c:1, cons:"On traverse le passage. Ne poussez pas la voix de poitrine vers le haut : laissez basculer vers la tête, la ligne doit rester continue."},
+  {t:"Contrôle",     lo:-12,hi:2,  d:12,c:1, cons:"Même traversée, mais plus lente — c'est plus difficile. Un filet d'air constant, aucune « marche d'escalier »."},
+  {t:"Les vagues",   lo:-10,hi:2,  d:12,c:2, cons:"Deux traversées enchaînées, montée comme descente. Gardez la même légèreté à chaque passage du col."}
+];
+let pass={running:false,raf:null,timer:null,samples:[],t0:0};
+let passViewLvl=null;   // palier affiché (peut être < palier débloqué, pour réviser)
+function passVoice(){ return PASS_VOICES[settings.voiceType||"tenor"]; }
+function passState(){  // progression mémorisée, par type de voix
+  if(!prog.pass) prog.pass={};
+  const k=settings.voiceType||"tenor";
+  if(!prog.pass[k]) prog.pass[k]={lvl:1,wins:0};
+  return prog.pass[k];
+}
+function passParams(){
+  const v=passVoice(), st=passState();
+  const lvl=Math.min(passViewLvl||st.lvl, PASS_LEVELS.length), L=PASS_LEVELS[lvl-1];
+  return {bot:v.P+L.lo, top:v.P+L.hi, P:v.P, d:L.d, c:L.c, lvl, L};
+}
+/* Hauteur cible (MIDI, décimale) à la fraction t (0→1) du parcours : cloche(s) en cosinus. */
+function passTargetMidi(frac){
+  const p=passParams();
+  return p.bot+(p.top-p.bot)*0.5*(1-Math.cos(2*Math.PI*p.c*frac));
+}
+/* Conversion hauteur → pixel Y du graphe (échelle englobant la courbe ET la zone de passage). */
+function passScale(){
+  const p=passParams();
+  const lo=p.bot-2, hi=Math.max(p.top,p.P)+2;
+  return {lo,hi,px:160/(hi-lo)};
+}
+function passY(m){ const s=passScale(); return 15+(s.hi-m)*s.px; }
+function drawPassScene(){
+  const svg=document.getElementById("passSvg"), p=passParams(), s=passScale();
+  // bande de la zone de passage (P ± 1 demi-ton) + ligne du passage
+  let g=`<rect x="0" y="${passY(p.P+1).toFixed(1)}" width="320" height="${(2*s.px).toFixed(1)}" fill="var(--warn)" opacity="0.13"/>`;
+  g+=`<line x1="0" y1="${passY(p.P).toFixed(1)}" x2="320" y2="${passY(p.P).toFixed(1)}" stroke="var(--warn)" stroke-width="1" stroke-dasharray="5 4" opacity="0.6"/>`;
+  // couloir cible (± 60 cents) + ligne centrale
+  const pts=[]; for(let i=0;i<=100;i++) pts.push(`${(i*3.2).toFixed(1)},${passY(passTargetMidi(i/100)).toFixed(1)}`);
+  g+=`<polyline points="${pts.join(" ")}" fill="none" stroke="var(--brass)" stroke-opacity="0.25" stroke-width="${(1.2*s.px).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  g+=`<polyline points="${pts.join(" ")}" fill="none" stroke="var(--brass)" stroke-width="1.3" opacity="0.85"/>`;
+  // tracé de la voix (rempli en direct) + point coloré selon la justesse
+  g+=`<polyline id="passUser" points="" fill="none" stroke="var(--paper-line)" stroke-width="2.4" stroke-linejoin="round"/>`;
+  g+=`<circle id="passDot" r="5" fill="var(--muted)" opacity="0"/>`;
+  svg.innerHTML=g;
+}
+/* Joue la sirène modèle (glissando synthétisé le long de la courbe cible). */
+function playGlide(){
+  const p=passParams(), ctx=ac(), t0=ctx.currentTime, N=128, arr=new Float32Array(N);
+  for(let i=0;i<N;i++) arr[i]=midiToFreq(p.bot+(p.top-p.bot)*0.5*(1-Math.cos(2*Math.PI*p.c*i/(N-1))));
+  const o=ctx.createOscillator(); o.type="sine";
+  const g=ctx.createGain(); g.gain.value=0; o.connect(g); g.connect(getOutput());
+  o.frequency.setValueAtTime(arr[0],t0);
+  o.frequency.setValueCurveAtTime(arr,t0+0.05,p.d-0.15);
+  g.gain.linearRampToValueAtTime(0.4,t0+0.15);
+  g.gain.setValueAtTime(0.4,t0+p.d-0.3);
+  g.gain.linearRampToValueAtTime(0.0001,t0+p.d);
+  o.start(t0); o.stop(t0+p.d+0.05);
+  // petit point gris qui suit le modèle sur la courbe
+  const dot=document.getElementById("passDot"), T0=performance.now();
+  const anim=()=>{const fr=(performance.now()-T0)/(p.d*1000); if(fr>=1||pass.running){dot.setAttribute("opacity","0");return;}
+    dot.setAttribute("cx",(fr*320).toFixed(1)); dot.setAttribute("cy",passY(passTargetMidi(fr)).toFixed(1));
+    dot.setAttribute("fill","var(--muted)"); dot.setAttribute("opacity","0.8"); requestAnimationFrame(anim);};
+  anim();
+}
+async function passStart(){
+  if(pass.running){ passStop(); return; }
+  const ok=await ensureMic();
+  if(!ok){ document.getElementById("passResult").innerHTML='<div class="notice" style="margin-top:10px;">Micro indisponible. Autorisez le micro (ou ouvrez l\'app dans Safari/Chrome) pour chanter la sirène.</div>'; return; }
+  drawPassScene(); document.getElementById("passResult").innerHTML="";
+  document.getElementById("passSing").innerHTML="<span>■</span> Arrêter";
+  pass.running=true;
+  let n=3; const cd=document.getElementById("passCount");
+  const tick=()=>{ if(!pass.running) return;
+    if(n>0){ cd.textContent=n+"…"; n--; pass.timer=setTimeout(tick,800); }
+    else { cd.textContent="Chantez !"; passRun(); } };
+  tick();
+}
+function passRun(){
+  const p=passParams(); pass.samples=[]; pass.t0=performance.now(); let last=0;
+  const buf=new Float32Array(mic.analyser.fftSize);
+  const poly=document.getElementById("passUser"), dot=document.getElementById("passDot");
+  const step=()=>{
+    if(!pass.running) return;
+    const el=performance.now()-pass.t0, frac=el/(p.d*1000);
+    if(frac>=1){ passFinish(); return; }
+    pass.raf=requestAnimationFrame(step);
+    if(el-last<33) return; last=el;
+    mic.analyser.getFloatTimeDomainData(buf);
+    const f=autoCorrelate(buf,ac().sampleRate);
+    if(f>0){
+      const m=69+12*Math.log2(f/A4());            // hauteur chantée (MIDI décimal)
+      const diff=(m-passTargetMidi(frac))*100;     // écart à la cible, en cents
+      pass.samples.push(diff);
+      const x=(frac*320).toFixed(1), y=passY(m);
+      if(y>4&&y<186) poly.setAttribute("points",(poly.getAttribute("points")||"")+` ${x},${y.toFixed(1)}`);
+      dot.setAttribute("cx",x); dot.setAttribute("cy",Math.max(6,Math.min(184,y)).toFixed(1)); dot.setAttribute("opacity","1");
+      dot.setAttribute("fill",Math.abs(diff)<=60?"var(--good)":Math.abs(diff)<=120?"var(--warn)":"var(--bad)");
+    } else pass.samples.push(null);
+  };
+  step();
+}
+function passStop(){
+  pass.running=false;
+  if(pass.raf)cancelAnimationFrame(pass.raf);
+  clearTimeout(pass.timer);
+  document.getElementById("passCount").textContent="";
+  document.getElementById("passSing").innerHTML='<span>🎙️</span> Chanter la sirène';
+}
+function passFinish(){
+  passStop();
+  const p=passParams(), total=Math.round(p.d*1000/33);
+  const heard=pass.samples.filter(s=>s!==null).length;
+  const on=pass.samples.filter(s=>s!==null&&Math.abs(s)<=60).length;
+  if(heard<8){ document.getElementById("passResult").innerHTML='<div class="notice info" style="margin-top:10px;">Je ne vous ai presque pas entendu. Plus près du micro, et glissez sur « ng » ou « ou » sans interruption.</div>'; return; }
+  const score=Math.round(Math.min(100,on/total*100));
+  const heardPct=Math.round(Math.min(100,heard/total*100));
+  const ok=score>=75;
+  const st=passState();
+  let progressMsg="";
+  if(ok){
+    prog.passWins=(prog.passWins||0)+1;
+    if(p.lvl===st.lvl){                          // on ne progresse que sur son palier courant
+      st.wins++;
+      if(st.wins>=3){
+        if(st.lvl<PASS_LEVELS.length){ st.lvl++; st.wins=0; passViewLvl=st.lvl; progressMsg=`🎉 Palier ${st.lvl} débloqué !`; }
+        else { prog.passDone6=true; progressMsg="🏔️ Dernier palier maîtrisé — passage franchi !"; }
+      } else progressMsg=`Réussite ${st.wins} / 3 pour débloquer le palier suivant.`;
+    }
+    unlock("siren",true);
+    unlock("passmaster",!!prog.passDone6);
+  }
+  addXP(Math.round(score/3)+(ok?20:0));
+  save();
+  const msg = ok ? "Sirène réussie — ligne bien suivie" : score>=50 ? "Pas mal — la ligne accroche encore par endroits" : "La ligne décroche — plus léger, plus lent, volume modéré";
+  document.getElementById("passResult").innerHTML=
+    `<div class="scorecard" style="margin-top:12px;">
+      <div class="big">${score}<span style="font-size:18px;color:var(--muted);"> / 100</span></div>
+      <div style="color:var(--text);font-size:13.5px;margin-top:4px;">${msg}</div>
+      <div class="bars">
+        ${barRow("Sur la ligne",score,100,score+"%")}
+        ${barRow("Entendu",heardPct,100,heardPct+"%")}
+      </div>
+      ${progressMsg?`<div style="color:var(--brass-soft);font-size:12.5px;margin-top:6px;font-weight:600;">${progressMsg}</div>`:""}
+      <div style="color:var(--muted);font-size:11px;margin-top:4px;">+${Math.round(score/3)+(ok?20:0)} XP · réussite = rester à ± 60 cents de la ligne.</div>
+    </div>`;
+  passUI(false);
+}
+/* Met l'écran Passaggio en accord avec la voix et le palier choisis.
+   redraw=false : rafraîchit les textes sans effacer le tracé affiché. */
+function passUI(redraw){
+  const st=passState();
+  if(passViewLvl===null||passViewLvl>st.lvl) passViewLvl=st.lvl;
+  const p=passParams(), L=p.L;
+  document.getElementById("passLvlTitle").textContent=`Palier ${p.lvl} / ${PASS_LEVELS.length} — ${L.t}`;
+  document.getElementById("passLvlMeta").textContent = p.lvl===st.lvl
+    ? (st.lvl===PASS_LEVELS.length&&prog.passDone6 ? "palier final maîtrisé — entraînement libre" : `${st.wins} / 3 réussites pour débloquer le suivant`)
+    : "palier déjà validé — entraînement libre";
+  document.getElementById("passConsigne").textContent=L.cons;
+  const nb=nameFromMidi(p.bot), nt=nameFromMidi(p.top), np=nameFromMidi(p.P);
+  document.getElementById("passInfo").textContent=`${nb.disp}${nb.oct} → ${nt.disp}${nt.oct}${p.c>1?" (×2)":""} · zone de passage vers ${np.disp}${np.oct} · ${p.d} s`;
+  document.getElementById("passPrev").disabled = p.lvl<=1;
+  document.getElementById("passNext").disabled = p.lvl>=st.lvl;
+  document.getElementById("passProgress").textContent=`Voix ${passVoice().label} · palier max débloqué : ${st.lvl} / ${PASS_LEVELS.length}`;
+  document.getElementById("voiceSeg").querySelectorAll("button").forEach(b=>
+    b.setAttribute("aria-pressed", b.dataset.voice===(settings.voiceType||"tenor") ? "true":"false"));
+  if(redraw!==false) drawPassScene();
+}
+document.getElementById("voiceSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ passStop(); settings.voiceType=b.dataset.voice; saveSettings(); passViewLvl=null;
+    document.getElementById("passResult").innerHTML=""; passUI(); };
+});
+document.getElementById("passPrev").onclick=()=>{ passStop(); passViewLvl=Math.max(1,(passViewLvl||passState().lvl)-1); document.getElementById("passResult").innerHTML=""; passUI(); };
+document.getElementById("passNext").onclick=()=>{ passStop(); passViewLvl=Math.min(passState().lvl,(passViewLvl||1)+1); document.getElementById("passResult").innerHTML=""; passUI(); };
+document.getElementById("passHear").onclick=()=>{ if(!pass.running){ drawPassScene(); playGlide(); } };
+document.getElementById("passSing").onclick=passStart;
+
 /* ================= PROGRÈS / RÉCOMPENSES ================= */
 const LEVELS=[
   {xp:0,t:"Débutant curieux"},{xp:120,t:"Oreille qui s'éveille"},{xp:300,t:"Lecteur assuré"},
   {xp:560,t:"Voix qui se pose"},{xp:900,t:"Juste par réflexe"},{xp:1350,t:"Chanteur solide"},
-  {xp:1900,t:"Timbre maîtrisé"},{xp:2600,t:"Oreille absolue en devenir"}
+  {xp:1900,t:"Timbre maîtrisé"},{xp:2600,t:"Oreille absolue en devenir"},
+  {xp:3400,t:"Interprète sensible"},{xp:4400,t:"Maître du souffle"},
+  {xp:5600,t:"Voix rayonnante"},{xp:7000,t:"Artiste lyrique"},
+  {xp:8800,t:"Étoile montante"},{xp:11000,t:"Maestro de la justesse"}
 ];
 const BADGES=[
   {id:"first",ic:"🎯",t:"Premier son",d:"Une première note notée"},
   {id:"bull",ic:"🥇",t:"Dans le mille",d:"Écart moyen ≤ 10 cents"},
   {id:"steady",ic:"🕯️",t:"Voix posée",d:"Hauteur très stable"},
   {id:"breath",ic:"🌬️",t:"Souffle long",d:"Note tenue ≥ 90 % du temps"},
-  {id:"streak5",ic:"🔥",t:"En série",d:"5 notes réussies d'affilée"},
+  {id:"streak5",ic:"🔥",t:"En série",d:"5 scores ≥ 70 d'affilée"},
+  {id:"streak10",ic:"🌋",t:"Inarrêtable",d:"10 scores ≥ 70 d'affilée"},
+  {id:"perfect",ic:"💯",t:"Sans faute",d:"Un score de 100 / 100"},
   {id:"ear10",ic:"👂",t:"Oreille fine",d:"10 bonnes réponses"},
+  {id:"ear25",ic:"🎧",t:"Oreille d'or",d:"25 bonnes réponses"},
   {id:"range",ic:"🎚️",t:"Toute la tessiture",d:"Juste dans le grave et l'aigu"},
-  {id:"dozen",ic:"📈",t:"Assidu",d:"25 notes travaillées"}
+  {id:"dozen",ic:"📈",t:"Assidu",d:"25 notes travaillées"},
+  {id:"hundred",ic:"🏆",t:"Centurion",d:"100 notes travaillées"},
+  {id:"days7",ic:"📅",t:"Semaine parfaite",d:"7 jours de pratique d'affilée"},
+  {id:"excerpt1",ic:"🎼",t:"Ma première partition",d:"Un entraînement d'extrait terminé"},
+  {id:"siren",ic:"🌊",t:"Sirène guidée",d:"Une sirène de passaggio réussie"},
+  {id:"passmaster",ic:"🏔️",t:"Passage franchi",d:"Palier 6 du passaggio maîtrisé"}
 ];
-let prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[]};
+let prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[],pass:{},passWins:0,passDone6:false};
 function load(){try{const r=localStorage.getItem("justenote_v2");if(r)prog=Object.assign(prog,JSON.parse(r));}catch(e){}}
 function save(){try{localStorage.setItem("justenote_v2",JSON.stringify(prog));}catch(e){}}
 function addXP(n){prog.xp+=n;save();}
@@ -1231,7 +1481,33 @@ function drawHistory(){
   if(!data.length) lbl.textContent="Notez des notes (onglet Chanter) pour voir votre progression ici.";
   else{const avg=Math.round(data.reduce((a,e)=>a+e.s,0)/data.length);lbl.textContent=`${data.length} dernière${data.length>1?"s":""} note${data.length>1?"s":""} · moyenne ${avg}/100`;}
 }
+/* Meilleure série de scores ≥ 70 consécutifs, recalculée depuis l'historique. */
+function bestStreakFromHistory(){
+  let best=0,cur=0;
+  (prog.history||[]).forEach(e=>{ if(e.s>=70){cur++; if(cur>best)best=cur;} else cur=0; });
+  return best;
+}
+/* Rattrapage : débloque rétroactivement les badges dont la condition est déjà
+   remplie d'après les statistiques enregistrées (corrige les occasions manquées). */
+function catchUpBadges(){
+  const bs=Math.max(prog.bestStreak||0, bestStreakFromHistory());
+  if(bs>(prog.bestStreak||0)){ prog.bestStreak=bs; save(); }
+  unlock("first", prog.evals>=1);
+  unlock("streak5", bs>=5);
+  unlock("streak10", bs>=10);
+  unlock("perfect", (prog.history||[]).some(e=>e.s>=100));
+  unlock("bull", prog.bestCents!==null && prog.bestCents<=10);
+  unlock("ear10", prog.quizCorrect>=10);
+  unlock("ear25", prog.quizCorrect>=25);
+  unlock("dozen", prog.evals>=25);
+  unlock("hundred", prog.evals>=100);
+  unlock("days7", practiceStreak()>=7);
+  unlock("range", prog.sungLow&&prog.sungHigh);
+  unlock("siren", (prog.passWins||0)>=1);
+  unlock("passmaster", !!prog.passDone6);
+}
 function renderProgress(){
+  catchUpBadges();
   const li=levelInfo();
   document.getElementById("lvlNum").textContent="Niveau "+li.num;
   document.getElementById("lvlTitle").textContent=li.title;
@@ -1437,6 +1713,7 @@ const TITLES={
   read:["Juste la note","Lisez la note, essayez de la chanter, écoutez pour vérifier."],
   ear:["Entraînement d'oreille","On joue une note : chantez-la, puis reconnaissez-la."],
   sing:["Chantez juste","Le micro vous écoute et vous corrige en temps réel."],
+  pass:["Passaggio","Sirène guidée : lisser le passage entre poitrine et tête, palier par palier."],
   progress:["Vos progrès","Niveaux, séries et récompenses gagnés au fil des séances."],
   tech:["Techniques & connaissances","Exercices pratiques et notions de solfège, de voix et d'histoire du chant."],
   excerpt:["Votre extrait","Importez, saisissez la mélodie, puis travaillez-la en boucle."]
@@ -1447,10 +1724,12 @@ function switchView(v){
   // En quittant l'onglet Extrait, on arrête la lecture en boucle et l'entraînement
   if(v!=="excerpt"&&loop.on) loopStop();
   if(v!=="excerpt"&&train.on) trainStop();
+  // En quittant l'onglet Passaggio, on interrompt une sirène en cours
+  if(v!=="pass"&&pass.running) passStop();
   document.querySelectorAll("#bottomNav button").forEach(b=>b.setAttribute("aria-current",b.dataset.view===v?"true":"false"));
-  ["read","ear","sing","progress","tech","excerpt"].forEach(k=>document.getElementById("view-"+k).classList.toggle("hide",k!==v));
+  ["read","ear","sing","pass","progress","tech","excerpt"].forEach(k=>document.getElementById("view-"+k).classList.toggle("hide",k!==v));
   document.getElementById("clefRow").classList.toggle("hide",!(v==="read"||v==="ear"||v==="sing"||v==="excerpt"));
-  document.getElementById("footNote").classList.toggle("hide",v==="tech"||v==="progress"||v==="excerpt");
+  document.getElementById("footNote").classList.toggle("hide",v==="tech"||v==="progress"||v==="excerpt"||v==="pass");
   document.getElementById("viewTitle").textContent=TITLES[v][0];
   document.getElementById("viewSub").textContent=TITLES[v][1];
   if(v==="ear")newQuiz();
@@ -1458,6 +1737,7 @@ function switchView(v){
   if(v==="progress")renderProgress();
   if(v==="tech")renderTech();
   if(v==="excerpt"){renderExcStaff();updateExcReadout();renderMelody();syncTempoSeg();updatePageNav();}
+  if(v==="pass")passUI();
 }
 document.querySelectorAll("#bottomNav button").forEach(b=>b.onclick=()=>switchView(b.dataset.view));
 
@@ -1527,7 +1807,7 @@ document.getElementById("techSeg").querySelectorAll("button").forEach(b=>{
 });
 /* progrès */
 document.getElementById("resetBtn").onclick=function(){
-  prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[]};
+  prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[],pass:{},passWins:0,passDone6:false};
   save();renderProgress();document.getElementById("quizScore").textContent="Score : 0 / 0";
 };
 /* clavier physique */
