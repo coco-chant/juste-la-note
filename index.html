@@ -372,6 +372,11 @@
       <button class="play secondary" id="excHear"><span>♪</span> Écouter</button>
       <button class="nav-btn" id="excNext" aria-label="note plus haute">▶</button>
     </div>
+    <div class="seg" id="alterSeg" style="margin-top:8px;">
+      <button data-alter="-1" aria-label="bémol">♭<small>bémol</small></button>
+      <button data-alter="0" aria-pressed="true" aria-label="bécarre">♮<small>naturel</small></button>
+      <button data-alter="1" aria-label="dièse">♯<small>dièse</small></button>
+    </div>
     <p class="panel-title" style="margin-top:10px;">Valeur de note à ajouter (touchez)</p>
     <div class="dur-grid" id="durGrid"></div>
     <div style="display:flex;gap:8px;margin-top:8px;">
@@ -379,19 +384,32 @@
       <button class="ghost-btn" id="excClear" style="flex:1;">Tout effacer</button>
     </div>
 
-    <p class="panel-title" style="margin-top:8px;">Ma mélodie</p>
+    <p class="panel-title" style="margin-top:8px;">Ma partition</p>
     <div id="melodyChips" style="min-height:24px;"></div>
 
-    <div class="seg" id="tempoSeg" style="margin-top:4px;">
-      <button data-tempo="lent" aria-pressed="false">Lent</button>
-      <button data-tempo="moyen" aria-pressed="true">Moyen</button>
-      <button data-tempo="rapide" aria-pressed="false">Rapide</button>
+    <p class="panel-title" style="margin-top:8px;">Mesure et tempo</p>
+    <div class="seg" id="sigSeg">
+      <button data-sig="2/4">2/4</button>
+      <button data-sig="3/4">3/4</button>
+      <button data-sig="4/4" aria-pressed="true">4/4</button>
+      <button data-sig="6/8">6/8</button>
+    </div>
+    <div class="opt" style="margin-top:8px;flex-direction:column;align-items:stretch;gap:4px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>Tempo <span class="set-val" id="bpmVal"></span></div>
+        <div class="hint">vitesse de lecture</div>
+      </div>
+      <input type="range" id="bpmRange" min="40" max="180" step="2" style="width:100%;accent-color:var(--brass);height:24px;">
     </div>
     <button class="play" id="loopBtn" style="margin-top:8px;" disabled><span>▶</span> Jouer en boucle</button>
     <button class="play secondary" id="trainBtn" style="margin-top:8px;" disabled><span>🎙️</span> S'entraîner au micro (note par note)</button>
     <div id="trainBox" class="hide" style="margin-top:10px;">
       <div class="verdict" id="trainStatus" style="margin-top:0;"></div>
-      <div id="trainSummary"></div>
+      <div class="tuner" style="margin-top:8px;padding:12px 14px;">
+        <div class="meter"><div class="center"></div><div class="needle" id="trainNeedle"></div></div>
+        <div class="meter-scale"><span>trop bas</span><span>juste</span><span>trop haut</span></div>
+      </div>
+      <div id="trainSummary" style="margin-top:8px;"></div>
       <div class="notemeta" style="text-align:center;margin-top:6px;">La note juge la hauteur (justesse), pas le timbre.</div>
     </div>
     <p class="sub">Vous placez la note comme elle est écrite ; en clé de sol ténor, le son sonne une octave plus bas — c'est pris en compte automatiquement.</p>
@@ -482,6 +500,15 @@
       <button class="nav-btn" id="setClose" aria-label="Fermer" style="width:40px;height:40px;font-size:17px;">✕</button>
     </div>
     <div class="set-row">
+      <div class="sl">Son des notes</div>
+      <div class="sh">Piano : familier et confortable · Voix (ah) : le plus proche de ce que vous chantez · Synthé : le son historique.</div>
+      <div class="seg" id="timbreSeg" style="margin-top:10px;">
+        <button data-timbre="piano">Piano<small>grand piano</small></button>
+        <button data-timbre="voix">Voix (ah)<small>pour le chant</small></button>
+        <button data-timbre="synth">Synthé<small>son doux</small></button>
+      </div>
+    </div>
+    <div class="set-row">
       <div class="sl">Volume <span class="set-val" id="volVal"></span></div>
       <div class="sh">Puissance du son des notes jouées.</div>
       <input type="range" id="volRange" min="0.3" max="1.6" step="0.05">
@@ -537,22 +564,79 @@ function getOutput(){
   }
   return outNode;
 }
+/* Trois timbres au choix (Paramètres) : synthé doux, piano, voix chantée.
+   playNote reste l'unique porte d'entrée ; elle aiguille vers le timbre choisi. */
 function playNote(midi,dur,vol){
+  const t=(settings&&settings.timbre)||"piano";
+  if(t==="voix") return playVoiceTone(midi,dur,vol);
+  if(t==="synth") return playSynthTone(midi,dur,vol);
+  return playPianoTone(midi,dur,vol);
+}
+/* --- Timbre « synthé doux » (le son historique de l'app) --- */
+function playSynthTone(midi,dur,vol){
   dur=dur||1.4; vol=vol||1; const ctx=ac(),t0=ctx.currentTime,f=midiToFreq(midi);
   const master=ctx.createGain(); master.gain.value=0; master.connect(getOutput());
   const vib=ctx.createOscillator(),vibGain=ctx.createGain();
   vib.frequency.value=5.2; vibGain.gain.value=f*0.006; vib.connect(vibGain); vib.start(t0); vib.stop(t0+dur);
-  // Harmoniques normalisées (somme = 1) : le timbre reste identique,
-  // mais la somme des oscillateurs ne peut plus dépasser le niveau prévu (pas de saturation interne).
+  // Harmoniques normalisées (somme = 1) : pas de saturation interne possible.
   [[1,1/1.55],[2,0.32/1.55],[3,0.16/1.55],[4,0.07/1.55]].forEach(([mult,amp])=>{
     const o=ctx.createOscillator(); o.type="sine"; o.frequency.value=f*mult; vibGain.connect(o.frequency);
     const g=ctx.createGain(); g.gain.value=amp; o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dur);
   });
-  const A=0.04,D=0.25,S=0.6,R=0.5,PK=0.85*vol;          // PK = niveau crête (× volume demandé)
+  const A=0.04,D=0.25,S=0.6,R=0.5,PK=0.85*vol;
   master.gain.setValueAtTime(0,t0);
-  master.gain.linearRampToValueAtTime(PK,t0+A);         // niveau relevé (le limiteur évite la saturation)
+  master.gain.linearRampToValueAtTime(PK,t0+A);
   master.gain.linearRampToValueAtTime(PK*S,t0+A+D);
   master.gain.setValueAtTime(PK*S,t0+dur-R);
+  master.gain.linearRampToValueAtTime(0.0001,t0+dur);
+}
+/* --- Timbre « piano » : attaque nette, décroissance naturelle, harmoniques
+   riches légèrement étirées (inharmonicité des cordes), filtre qui se referme
+   comme le marteau qui s'éloigne. --- */
+function playPianoTone(midi,dur,vol){
+  dur=dur||1.4; vol=vol||1; const ctx=ac(),t0=ctx.currentTime,f=midiToFreq(midi);
+  const master=ctx.createGain(); master.gain.value=0;
+  const lp=ctx.createBiquadFilter(); lp.type="lowpass"; lp.Q.value=0.4;
+  lp.frequency.setValueAtTime(Math.min(9000,f*9),t0);
+  lp.frequency.exponentialRampToValueAtTime(Math.min(4000,Math.max(600,f*2.4)),t0+dur*0.8);
+  master.connect(lp); lp.connect(getOutput());
+  // Partiels d'un piano (amplitudes normalisées, somme = 1) + étirement inharmonique.
+  const parts=[[1,0.42],[2,0.24],[3,0.14],[4,0.09],[5,0.06],[6,0.05]];
+  parts.forEach(([k,amp])=>{
+    const o=ctx.createOscillator(); o.type="sine";
+    o.frequency.value=f*k*(1+0.0006*k*k);          // les cordes réelles « étirent » les aigus
+    const g=ctx.createGain();
+    g.gain.setValueAtTime(amp,t0);
+    g.gain.exponentialRampToValueAtTime(amp*Math.pow(0.35,k*0.6)+0.0001,t0+dur); // les aigus s'éteignent plus vite
+    o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dur+0.05);
+  });
+  const PK=0.9*vol;
+  master.gain.setValueAtTime(0,t0);
+  master.gain.linearRampToValueAtTime(PK,t0+0.008);                 // attaque « marteau »
+  master.gain.exponentialRampToValueAtTime(Math.max(0.06,PK*0.18),t0+dur*0.85); // décroissance naturelle
+  master.gain.linearRampToValueAtTime(0.0001,t0+dur);
+}
+/* --- Timbre « voix chantée (ah) » : source riche filtrée par des formants
+   (résonances du conduit vocal sur la voyelle « ah ») + vibrato souple.
+   C'est le son le plus proche de ce que l'on chante — idéal pour se caler. --- */
+function playVoiceTone(midi,dur,vol){
+  dur=dur||1.4; vol=vol||1; const ctx=ac(),t0=ctx.currentTime,f=midiToFreq(midi);
+  const master=ctx.createGain(); master.gain.value=0; master.connect(getOutput());
+  const src=ctx.createOscillator(); src.type="sawtooth"; src.frequency.value=f;
+  const vib=ctx.createOscillator(),vibGain=ctx.createGain();
+  vib.frequency.value=5.3; vibGain.gain.value=f*0.008; vib.connect(vibGain); vibGain.connect(src.frequency);
+  vib.start(t0); vib.stop(t0+dur);
+  // Formants de la voyelle « ah » (voix d'homme) + zone du « formant du chanteur » (~2,8 kHz).
+  [[700,10,1.0],[1150,11,0.55],[2800,9,0.35]].forEach(([freq,q,g])=>{
+    const bp=ctx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=freq; bp.Q.value=q;
+    const gg=ctx.createGain(); gg.gain.value=g;
+    src.connect(bp); bp.connect(gg); gg.connect(master);
+  });
+  src.start(t0); src.stop(t0+dur);
+  const A=0.09,R=0.35,PK=1.5*vol;   // la sortie des filtres est faible : on compense (le limiteur veille)
+  master.gain.setValueAtTime(0,t0);
+  master.gain.linearRampToValueAtTime(PK,t0+A);          // attaque souple, comme une voyelle posée
+  master.gain.setValueAtTime(PK,t0+Math.max(A,dur-R));
   master.gain.linearRampToValueAtTime(0.0001,t0+dur);
 }
 
@@ -604,9 +688,9 @@ const CLEFS={
   tenor8:{name:"sol8",bottom:["E",4], range:[["C",4],["A",5]], shift:-12,glyph:"𝄞"},
   bass:  {name:"fa",  bottom:["G",2], range:[["F",2],["E",4]], shift:0,  glyph:"𝄢"}
 };
-let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false};
+let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false,excAlter:0};
 /* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
-let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false,voiceType:"tenor"};
+let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false,voiceType:"tenor",timbre:"piano"};
 function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
 function saveSettings(){try{localStorage.setItem("justenote_settings",JSON.stringify(settings));}catch(e){}}
 function buildNotes(){
@@ -624,24 +708,49 @@ const lineY=i=>STAFF.top+i*STAFF.gap;
 function yForDia(dia){const c=CLEFS[state.clef];const db=diatonic(c.bottom[0],c.bottom[1]);return lineY(4)-(dia-db)*(STAFF.gap/2);}
 /* Dessine une portée (5 lignes + clé + note) dans le SVG demandé.
    withHalo : ajoute le halo animé (seulement pour l'onglet Lire). */
-function renderStaffInto(svgId,n,withHalo){
+/* Dessine la clé en vectoriel, avec ses points d'ancrage EXACTS sur la portée :
+   - clé de sol : la spirale est centrée sur la ligne du Sol (2e depuis le bas) ;
+   - clé de fa  : la tête part de la ligne du Fa (2e depuis le haut) et les deux
+     points encadrent cette ligne (c'est elle qu'ils désignent).
+   (L'ancien glyphe de police se plaçait différemment selon l'appareil, d'où le décalage.)
+   lineYFn permet de réutiliser la fonction sur une portée dont l'origine diffère. */
+function drawClef(svg,cname,x,lineYFn){
+  const LY=lineYFn||lineY, S="var(--paper-line)";
+  const P=(d,w)=>svg.appendChild(el("path",{d,fill:"none",stroke:S,"stroke-width":w,"stroke-linecap":"round","stroke-linejoin":"round"}));
+  if(cname==="fa"){
+    const hx=x+4, fy=LY(1);                                      // fy = ligne du Fa
+    svg.appendChild(el("circle",{cx:hx,cy:fy,r:2.7,fill:S}));    // tête posée sur la ligne du Fa
+    P(`M ${hx},${fy} C ${hx-2},${fy-8} ${hx+7},${fy-11} ${hx+10},${fy-6} C ${hx+14},${fy+1} ${hx+9},${fy+12} ${hx+1},${fy+19}`,2.2);
+    svg.appendChild(el("circle",{cx:hx+15.5,cy:fy-6.2,r:1.9,fill:S})); // point au-dessus de la ligne du Fa
+    svg.appendChild(el("circle",{cx:hx+15.5,cy:fy+6.2,r:1.9,fill:S})); // point en dessous
+  }else{
+    const cx=x+9, cy=LY(3), top=LY(0)-14, bot=LY(4)+11;          // cy = ligne du Sol
+    P(`M ${cx},${top+4} C ${cx+2},${top+22} ${cx-2},${bot-22} ${cx},${bot-4}`,1.7);         // tige
+    P(`M ${cx},${top+4} c 3.5,-3 8,-0.5 7,4.5 c -0.8,3.5 -4,5.5 -7,7.5`,1.7);               // boucle du haut
+    P(`M ${cx},${cy-8} C ${cx+7.5},${cy-7} ${cx+8},${cy+4} ${cx+1},${cy+5.5} C ${cx-6},${cy+7} ${cx-7},${cy-1} ${cx-2.5},${cy-3} C ${cx+1},${cy-4.5} ${cx+3},${cy-1} ${cx+1},${cy+1}`,1.7); // spirale sur la ligne du Sol
+    P(`M ${cx},${bot-4} C ${cx-0.5},${bot} ${cx-4},${bot+1} ${cx-5.5},${bot-1.5}`,1.7);     // crochet du bas
+    svg.appendChild(el("circle",{cx:cx-5.2,cy:bot-2,r:1.8,fill:S}));
+    if(cname==="sol8"){const e8=el("text",{x:cx,y:bot+9,"font-size":11,fill:S,"font-family":"serif","text-anchor":"middle","font-weight":"600"});e8.textContent="8";svg.appendChild(e8);}
+  }
+}
+function renderStaffInto(svgId,n,withHalo,alter){
   const svg=document.getElementById(svgId); svg.innerHTML=""; const c=CLEFS[state.clef];
   for(let i=0;i<5;i++) svg.appendChild(el("line",{x1:STAFF.x0,y1:lineY(i),x2:STAFF.x1,y2:lineY(i),stroke:"var(--paper-line)","stroke-width":1.4}));
-  const clef=el("text",{x:STAFF.x0+2,y:lineY(4)+(c.name==="fa"?-3:6),"font-size":(c.name==="fa"?42:58),fill:"var(--paper-line)","font-family":"serif"});
-  clef.textContent=c.glyph; svg.appendChild(clef);
-  if(c.name==="sol8"){const e8=el("text",{x:STAFF.x0+14,y:lineY(4)+26,"font-size":13,fill:"var(--paper-line)","font-family":"serif","text-anchor":"middle"});e8.textContent="8";svg.appendChild(e8);}
+  drawClef(svg,c.name,STAFF.x0+2);
   const cx=200,cy=yForDia(n.dia);
   const db=diatonic(c.bottom[0],c.bottom[1]),dtop=db+8;
   for(let d=dtop+2;d<=n.dia;d+=2){const y=yForDia(d);svg.appendChild(el("line",{x1:cx-15,y1:y,x2:cx+15,y2:y,stroke:"var(--paper-line)","stroke-width":1.4}));}
   for(let d=db-2;d>=n.dia;d-=2){const y=yForDia(d);svg.appendChild(el("line",{x1:cx-15,y1:y,x2:cx+15,y2:y,stroke:"var(--paper-line)","stroke-width":1.4}));}
   if(withHalo) svg.appendChild(el("circle",{cx:cx,cy:cy,r:9,fill:"none",stroke:"var(--brass)","stroke-width":0,opacity:0,id:"halo"}));
+  if(alter){ const a=el("text",{x:cx-15,y:cy+5.5,"font-size":17,fill:"var(--brass)","text-anchor":"middle","font-weight":"600"});
+    a.textContent=ALTER_SYM[String(alter)]; svg.appendChild(a); }
   svg.appendChild(el("ellipse",{cx:cx,cy:cy,rx:8.4,ry:6,fill:"var(--brass)",transform:`rotate(-18 ${cx} ${cy})`}));
   const up=n.dia<db+4;
   if(up) svg.appendChild(el("line",{x1:cx+7.6,y1:cy-1,x2:cx+7.6,y2:cy-34,stroke:"var(--brass)","stroke-width":1.8}));
   else svg.appendChild(el("line",{x1:cx-7.6,y1:cy+1,x2:cx-7.6,y2:cy+34,stroke:"var(--brass)","stroke-width":1.8}));
 }
 function renderStaff(){ renderStaffInto("svgRead", state.notes[state.idx], true); }
-function renderExcStaff(){ renderStaffInto("svgExc", state.notes[state.excIdx], false); }
+function renderExcStaff(){ renderStaffInto("svgExc", state.notes[state.excIdx], false, state.excAlter||0); }
 function ringHalo(){
   const h=document.getElementById("halo"); if(h) h.animate([{strokeWidth:0,opacity:.9,rx:9,ry:9},{strokeWidth:.5,opacity:0,rx:26,ry:26}],{duration:600,easing:"ease-out"});
   const s=document.getElementById("sheetRead"); s.classList.remove("ring"); void s.offsetWidth; s.classList.add("ring");
@@ -940,8 +1049,14 @@ function updateSingTarget(){
 function singGo(d){state.singIdx=Math.max(0,Math.min(state.notes.length-1,state.singIdx+d));updateSingTarget();if(state.droneOn)startDrone(singTargetMidi());document.getElementById("scoreCardBox").innerHTML="";}
 
 /* ================= EXTRAIT (import + saisie + boucle) ================= */
-let excerpt={melody:[],tempo:"moyen"};
-function loadExcerpt(){try{const r=localStorage.getItem("justenote_excerpt");if(r)excerpt=Object.assign(excerpt,JSON.parse(r));}catch(e){}}
+let excerpt={melody:[],sig:"4/4",bpm:80};
+function loadExcerpt(){
+  try{const r=localStorage.getItem("justenote_excerpt");if(r)excerpt=Object.assign(excerpt,JSON.parse(r));}catch(e){}
+  // Migration : l'ancien réglage lent/moyen/rapide devient un vrai tempo en BPM.
+  if(excerpt.tempo){ excerpt.bpm={lent:55,moyen:80,rapide:120}[excerpt.tempo]||80; delete excerpt.tempo; }
+  if(!excerpt.sig) excerpt.sig="4/4";
+  if(!excerpt.bpm) excerpt.bpm=80;
+}
 function saveExcerpt(){try{localStorage.setItem("justenote_excerpt",JSON.stringify(excerpt));}catch(e){}}
 
 /* --- Image de référence (réduite puis conservée localement) --- */
@@ -1074,11 +1189,14 @@ function removeExcImg(){
 }
 
 /* --- Saisie de la mélodie via la portée (respecte la clé et le décalage ténor) --- */
-function excCursorMidi(){const n=state.notes[state.excIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+c.shift;}
+const ALTER_SYM={"-1":"♭","0":"","1":"♯"};
+function excCursorMidi(){const n=state.notes[state.excIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+c.shift+(state.excAlter||0);}
+/* Nom écrit de la note du curseur, altération comprise (ex. Fa♯4). */
+function excWrittenName(){const n=state.notes[state.excIdx];return noteLabel(n)+ALTER_SYM[String(state.excAlter||0)]+n.oct;}
 function updateExcReadout(){
-  const n=state.notes[state.excIdx],c=CLEFS[state.clef];
-  if(c.shift){const so=nameFromMidi(midiOf(n.letter,n.oct)+c.shift);document.getElementById("excReadout").textContent=`écrit ${noteLabel(n)}${n.oct} · sonne ${so.disp}${so.oct}`;}
-  else document.getElementById("excReadout").textContent=`${noteLabel(n)}${n.oct}`;
+  const c=CLEFS[state.clef];
+  if(c.shift){const so=nameFromMidi(excCursorMidi());document.getElementById("excReadout").textContent=`écrit ${excWrittenName()} · sonne ${so.disp}${so.oct}`;}
+  else document.getElementById("excReadout").textContent=excWrittenName();
 }
 function excGo(d){ state.excIdx=Math.max(0,Math.min(state.notes.length-1,state.excIdx+d)); renderExcStaff(); updateExcReadout(); }
 /* Clic/tap sur la portée : on convertit la hauteur du point touché en note.
@@ -1117,41 +1235,139 @@ function buildDurButtons(){
 }
 // Ajoute une note (à la hauteur du curseur) ou un silence, avec la valeur choisie.
 function excAddDuration(d){
-  if(d.rest){ excerpt.melody.push({rest:true,dur:d.beats,name:d.label}); } // ex. "Silence", "Demi-soupir"
+  if(d.rest){ excerpt.melody.push({rest:true,dur:d.beats,name:d.label,k:d.k}); } // ex. "Silence", "Demi-soupir"
   else{
     const n=state.notes[state.excIdx], midi=excCursorMidi();
-    excerpt.melody.push({midi,name:noteLabel(n)+n.oct,dur:d.beats,durLabel:d.label});
-    playNote(midi,d.beats*(TEMPO[excerpt.tempo]||0.75));   // aperçu sonore de la note ajoutée
+    excerpt.melody.push({midi,dia:n.dia,alter:state.excAlter||0,name:excWrittenName(),dur:d.beats,durLabel:d.label,k:d.k});
+    playNote(midi,d.beats*60/(excerpt.bpm||80));           // aperçu sonore au tempo choisi
   }
   saveExcerpt(); renderMelody();
 }
 function excDelLast(){ excerpt.melody.pop(); saveExcerpt(); renderMelody(); }
 function excClear(){ if(loop.on) loopStop(); if(train.on) trainStop(); excerpt.melody=[]; saveExcerpt(); renderMelody(); document.getElementById("trainBox").classList.add("hide"); }
+
+/* --- Rendu de la mélodie en VRAIE partition (SVG défilable) ---
+   Clé, chiffrage, notes avec hampes/crochets/points, silences, altérations,
+   lignes supplémentaires et barres de mesure. Chaque tête porte data-i pour
+   le surlignage en direct pendant la lecture et l'entraînement. */
+const MEL={gs:11, top:34, H:118, x0:66, slot:32};
+let melXs=[];                                    // position x de chaque note (pour l'auto-défilement)
+function sigParts(){ const m=(excerpt.sig||"4/4").split("/"); return {num:+m[0],den:+m[1]}; }
+function measureQuarters(){ const s=sigParts(); return s.num*4/s.den; }  // longueur d'une mesure, en noires
+/* Position écrite (degré diatonique + altération) reconstruite depuis le MIDI sonnant,
+   pour rester correcte même si l'on change de clé après la saisie. */
+function melWritten(m){
+  const c=CLEFS[state.clef], w=m.midi-c.shift, alt=m.alter||0;
+  const base=w-alt, oct=Math.floor(base/12)-1, pc=((base%12)+12)%12;
+  const L={0:"C",2:"D",4:"E",5:"F",7:"G",9:"A",11:"B"}[pc];
+  if(L!==undefined) return {dia:diatonic(L,oct), alter:alt};
+  // le MIDI - altération ne tombe pas sur une note naturelle (vieille saisie) : approximation au plus proche
+  const names=["C","C","D","D","E","F","F","G","G","A","A","B"];
+  return {dia:diatonic(names[pc],oct), alter:pc%2?1:0};
+}
 function renderMelody(){
   const box=document.getElementById("melodyChips"), n=excerpt.melody.length;
   document.getElementById("loopBtn").disabled = n===0;
   document.getElementById("trainBtn").disabled = n===0;
-  if(!n){ box.innerHTML='<span class="notemeta">Aucune note pour l’instant. Choisissez une hauteur, puis une valeur de note ci-dessus.</span>'; return; }
-  box.innerHTML=excerpt.melody.map((m,i)=>`<span class="mchip${m.rest?' rest':''}" data-i="${i}">${m.name}${m.durLabel?`<small> ${m.durLabel}</small>`:""}</span>`).join("");
+  if(!n){ box.innerHTML='<span class="notemeta">Aucune note pour l’instant. Choisissez une hauteur, puis une valeur de note ci-dessus.</span>'; melXs=[]; return; }
+  const gs=MEL.gs, top=MEL.top, LY=i=>top+i*gs, c=CLEFS[state.clef], db=diatonic(c.bottom[0],c.bottom[1]);
+  const yOf=dia=>LY(4)-(dia-db)*(gs/2);
+  const mq=measureQuarters(), sig=sigParts();
+  let x=MEL.x0, g="", beats=0; melXs=[];
+  excerpt.melody.forEach((m,i)=>{
+    // barre de mesure quand la précédente est pleine
+    if(beats>0 && Math.abs(beats%mq)<1e-6){ g+=`<line x1="${x-6}" y1="${LY(0)}" x2="${x-6}" y2="${LY(4)}" stroke="var(--paper-line)" stroke-width="1.2"/>`; x+=6; }
+    melXs.push(x);
+    if(m.rest){
+      const mid=LY(2);
+      if(m.k==="demiS"||m.name==="Demi-soupir")
+        g+=`<g data-i="${i}"><circle cx="${x-3}" cy="${mid-3}" r="2" fill="var(--paper-line)"/><path d="M ${x-1.5},${mid-2} C ${x+1},${mid-1} ${x+3},${mid-2} ${x+4},${mid-4} L ${x+1},${mid+7}" fill="none" stroke="var(--paper-line)" stroke-width="1.6"/></g>`;
+      else
+        g+=`<g data-i="${i}"><path d="M ${x-2},${mid-8} L ${x+3},${mid-3} C ${x-1},${mid} ${x+3},${mid+2} ${x+2.5},${mid+5} C ${x-2},${mid+3} ${x-1},${mid+8} ${x+2},${mid+10}" fill="none" stroke="var(--paper-line)" stroke-width="1.7"/></g>`;
+    }else{
+      const w=melWritten(m), y=yOf(w.dia);
+      // lignes supplémentaires
+      for(let dd=db+10;dd<=w.dia;dd+=2) g+=`<line x1="${x-9}" y1="${yOf(dd)}" x2="${x+9}" y2="${yOf(dd)}" stroke="var(--paper-line)" stroke-width="1.1"/>`;
+      for(let dd=db-2;dd>=w.dia;dd-=2) g+=`<line x1="${x-9}" y1="${yOf(dd)}" x2="${x+9}" y2="${yOf(dd)}" stroke="var(--paper-line)" stroke-width="1.1"/>`;
+      if(w.alter) g+=`<text x="${x-10.5}" y="${y+4.5}" font-size="13" fill="var(--paper-line)" text-anchor="middle" font-weight="600">${ALTER_SYM[String(w.alter)]}</text>`;
+      const hollow=(m.k==="blanche"||m.k==="ronde"||(m.durLabel||"").match(/Blanche|Ronde/));
+      g+=`<ellipse class="mel-head" data-i="${i}" cx="${x}" cy="${y.toFixed(1)}" rx="5.6" ry="4.1" transform="rotate(-18 ${x} ${y.toFixed(1)})" ${hollow?`fill="none" stroke="var(--paper-line)" stroke-width="1.7"`:`fill="var(--paper-line)"`}/>`;
+      const isRonde=(m.k==="ronde"||(m.durLabel||"")==="Ronde");
+      if(!isRonde){
+        const up=w.dia<db+4, sx=up?x+5:x-5, y1=up?y-1.5:y+1.5, y2=up?y-25:y+25;
+        g+=`<line x1="${sx}" y1="${y1.toFixed(1)}" x2="${sx}" y2="${y2.toFixed(1)}" stroke="var(--paper-line)" stroke-width="1.5"/>`;
+        const flags=(m.k==="croche"?1:m.k==="doubleC"?2:((m.durLabel||"")==="Croche"?1:(m.durLabel||"")==="Double-croche"?2:0));
+        for(let fte=0;fte<flags;fte++){ const fy=y2+(up?fte*6:-fte*6);
+          g+=`<path d="M ${sx},${fy} c 6,${up?2:-2} 7,${up?8:-8} 2,${up?12:-12}" fill="none" stroke="var(--paper-line)" stroke-width="1.5"/>`; }
+      }
+      if(m.dur===1.5||(m.durLabel||"").includes("pointée")) g+=`<circle cx="${x+9.5}" cy="${(y-3).toFixed(1)}" r="1.6" fill="var(--paper-line)"/>`;
+    }
+    beats+=(m.dur||1); x+=MEL.slot;
+  });
+  const W=x+14;
+  let head=""; for(let i2=0;i2<5;i2++) head+=`<line x1="4" y1="${LY(i2)}" x2="${W-4}" y2="${LY(i2)}" stroke="var(--paper-line)" stroke-width="1.2"/>`;
+  head+=`<text x="40" y="${LY(2)-1.5}" font-size="14.5" fill="var(--paper-line)" text-anchor="middle" font-weight="700" font-family="serif">${sig.num}</text>`;
+  head+=`<text x="40" y="${LY(4)-1.5}" font-size="14.5" fill="var(--paper-line)" text-anchor="middle" font-weight="700" font-family="serif">${sig.den}</text>`;
+  g+=`<circle id="melHalo" r="9" fill="none" stroke="var(--brass)" stroke-width="2" opacity="0"/>`;
+  box.innerHTML=`<div class="sheet" style="padding:6px 4px;"><div class="piano-wrap" id="melodyWrap">`+
+    `<svg id="melodySvg" width="${W}" height="${MEL.H}" viewBox="0 0 ${W} ${MEL.H}" style="display:block;width:${W}px;">${head}${g}</svg>`+
+    `</div></div>`;
+  // la clé, dessinée avec les mêmes ancrages exacts que les autres portées
+  drawClef(document.getElementById("melodySvg"),c.name,6,LY);
+}
+/* Surligne la note i (lecture / entraînement) et centre le défilement dessus. */
+function highlightMelNote(i){
+  const svg=document.getElementById("melodySvg"); if(!svg) return;
+  svg.querySelectorAll(".mel-head").forEach(h=>{
+    const on=+h.dataset.i===i;
+    if(h.getAttribute("fill")==="none"||h.dataset.hollow) h.setAttribute("stroke",on?"var(--brass)":"var(--paper-line)");
+    h.style.fill = on ? "var(--brass)" : "";
+  });
+  const halo=document.getElementById("melHalo"), head=svg.querySelector(`.mel-head[data-i="${i}"]`);
+  if(halo&&head){ halo.setAttribute("cx",head.getAttribute("cx")); halo.setAttribute("cy",head.getAttribute("cy")); halo.setAttribute("opacity","0.6"); }
+  const wrap=document.getElementById("melodyWrap");
+  if(wrap&&melXs[i]!==undefined) wrap.scrollTo({left:Math.max(0,melXs[i]-wrap.clientWidth/2),behavior:"smooth"});
+}
+function clearMelHighlight(){
+  const svg=document.getElementById("melodySvg"); if(!svg) return;
+  svg.querySelectorAll(".mel-head").forEach(h=>{h.style.fill="";h.setAttribute("stroke","var(--paper-line)");});
+  const halo=document.getElementById("melHalo"); if(halo) halo.setAttribute("opacity","0");
+}
+/* Colore les têtes selon les résultats de l'entraînement (vert/ambre/rouge). */
+function colorMelResults(results){
+  const svg=document.getElementById("melodySvg"); if(!svg) return;
+  results.forEach(r=>{ if(r.i===undefined) return;
+    const h=svg.querySelector(`.mel-head[data-i="${r.i}"]`); if(!h) return;
+    const col=r.score===null?"var(--muted)":r.score>=80?"var(--good)":r.score>=50?"var(--warn)":"var(--bad)";
+    h.style.fill=col; h.setAttribute("stroke",col);
+  });
 }
 
-/* --- Lecture en boucle, avec la note en cours surlignée --- */
-let loop={on:false,timer:null,idx:0};
-const TEMPO={lent:1.1,moyen:0.75,rapide:0.5}; // secondes par temps (une noire)
-function highlightChip(i){document.querySelectorAll("#melodyChips .mchip").forEach(c=>c.classList.toggle("on",+c.dataset.i===i));}
-function clearHighlight(){document.querySelectorAll("#melodyChips .mchip").forEach(c=>c.classList.remove("on"));}
+/* --- Lecture en boucle : la partition se lit en direct (note surlignée + défilement).
+   Le tempo est en BPM (♩ = battements/minute) ; le 1er temps de chaque mesure
+   est légèrement accentué, selon la signature choisie. --- */
+let loop={on:false,timer:null,idx:0,beats:0};
 function loopStep(){
   if(!loop.on || !excerpt.melody.length) return;
-  const m=excerpt.melody[loop.idx], spb=TEMPO[excerpt.tempo]||0.75, dur=(m.dur||1)*spb; // durée réelle selon la valeur de note
-  if(!m.rest) playNote(m.midi,dur);              // un silence : on attend sans jouer
-  highlightChip(loop.idx);
+  const m=excerpt.melody[loop.idx], spb=60/(excerpt.bpm||80), dur=(m.dur||1)*spb;
+  const mq=measureQuarters(), downbeat=Math.abs(loop.beats%mq)<1e-6;   // 1er temps de la mesure ?
+  if(!m.rest) playNote(m.midi,dur,downbeat?1.25:0.9);                 // un silence : on attend sans jouer
+  highlightMelNote(loop.idx);
+  loop.beats+=(m.dur||1);
   loop.idx=(loop.idx+1)%excerpt.melody.length;
-  loop.timer=setTimeout(loopStep,(dur+0.08)*1000); // petit silence entre les notes
+  if(loop.idx===0) loop.beats=0;
+  loop.timer=setTimeout(loopStep,(dur+0.06)*1000); // petit silence entre les notes
 }
-function loopStart(){ if(!excerpt.melody.length) return; loop.on=true; loop.idx=0; document.getElementById("loopBtn").innerHTML="<span>■</span> Arrêter"; loopStep(); }
-function loopStop(){ loop.on=false; clearTimeout(loop.timer); document.getElementById("loopBtn").innerHTML="<span>▶</span> Jouer en boucle"; clearHighlight(); }
+function loopStart(){ if(!excerpt.melody.length) return; loop.on=true; loop.idx=0; loop.beats=0; document.getElementById("loopBtn").innerHTML="<span>■</span> Arrêter"; loopStep(); }
+function loopStop(){ loop.on=false; clearTimeout(loop.timer); document.getElementById("loopBtn").innerHTML="<span>▶</span> Jouer en boucle"; clearMelHighlight(); }
 function toggleLoop(){ loop.on?loopStop():loopStart(); }
-function syncTempoSeg(){document.getElementById("tempoSeg").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.tempo===excerpt.tempo?"true":"false"));}
+/* Met les contrôles (signature, tempo, altération) en accord avec l'état. */
+function syncExcControls(){
+  document.getElementById("sigSeg").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.sig===(excerpt.sig||"4/4")?"true":"false"));
+  document.getElementById("bpmRange").value=excerpt.bpm||80;
+  document.getElementById("bpmVal").textContent="♩ = "+(excerpt.bpm||80);
+  document.getElementById("alterSeg").querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",+b.dataset.alter===(state.excAlter||0)?"true":"false"));
+}
 
 /* --- Entraînement au micro, note par note ---
    Pour chaque note de la mélodie : courte référence jouée, puis on écoute ~2,2 s
@@ -1160,6 +1376,7 @@ let train={on:false,idx:0,results:[],raf:null};
 function setTrainStatus(t){document.getElementById("trainStatus").textContent=t;}
 function trainStop(){
   train.on=false; if(train.raf)cancelAnimationFrame(train.raf);
+  trainNeedleReset(); clearMelHighlight();
   document.getElementById("trainBtn").innerHTML="<span>🎙️</span> S'entraîner au micro (note par note)";
 }
 function toggleTrain(){ train.on?trainStop():trainStart(); }
@@ -1174,11 +1391,18 @@ async function trainStart(){
   document.getElementById("trainBtn").innerHTML="<span>■</span> Arrêter l'entraînement";
   trainNextNote();
 }
+/* Remet l'aiguille de l'accordeur d'entraînement au neutre. */
+function trainNeedleReset(){
+  const nd=document.getElementById("trainNeedle"); if(!nd) return;
+  nd.style.left="50%"; nd.style.background="var(--muted)";
+}
 function trainNextNote(){
   if(!train.on) return;
   while(train.idx<excerpt.melody.length && excerpt.melody[train.idx].rest) train.idx++; // on saute les silences
   if(train.idx>=excerpt.melody.length){ trainFinish(); return; }
   const m=excerpt.melody[train.idx];
+  highlightMelNote(train.idx);               // la partition suit : la note en cours est surlignée
+  trainNeedleReset();
   setTrainStatus(`Note ${train.idx+1}/${excerpt.melody.length} — écoutez : ${m.name}`);
   playNote(m.midi,0.7);                      // courte référence
   setTimeout(()=>collectNote(m),900);        // on écoute APRÈS la référence (pas de pollution)
@@ -1188,13 +1412,21 @@ function collectNote(m){
   setTrainStatus(`Note ${train.idx+1}/${excerpt.melody.length} — chantez : ${m.name} …`);
   const tFreq=midiToFreq(m.midi), buf=new Float32Array(mic.analyser.fftSize);
   const dur=2200, t0=performance.now(); let last=0; const samples=[];
+  const needle=document.getElementById("trainNeedle");
   const step=()=>{
     if(!train.on) return;
     const now=performance.now();
     if(now-last>=40){ last=now;
       mic.analyser.getFloatTimeDomainData(buf);
       const f=autoCorrelate(buf,ac().sampleRate);
-      if(f>0) samples.push(1200*Math.log2(f/tFreq));
+      if(f>0){
+        const cents=1200*Math.log2(f/tFreq);
+        samples.push(cents);
+        // accordeur en direct : aiguille et couleur, comme dans l'onglet Chanter
+        const cl=Math.max(-50,Math.min(50,cents));
+        needle.style.left=(50+cl)+"%";
+        needle.style.background=Math.abs(cents)<=10?"var(--good)":Math.abs(cents)<=30?"var(--warn)":"var(--bad)";
+      }
     }
     if(now-t0<dur){ train.raf=requestAnimationFrame(step); }
     else { scoreNote(m,samples); }
@@ -1203,21 +1435,23 @@ function collectNote(m){
 }
 function scoreNote(m,samples){
   const valid=samples.length;
-  if(valid<6){ train.results.push({name:m.name,score:null}); }
+  if(valid<6){ train.results.push({name:m.name,score:null,i:train.idx}); }
   else{
     const meanAbs=samples.reduce((a,b)=>a+Math.abs(b),0)/valid;
     const score=Math.round(Math.max(0,Math.min(100,100*(1-meanAbs/50))));
-    train.results.push({name:m.name,score,cents:Math.round(meanAbs)});
+    train.results.push({name:m.name,score,cents:Math.round(meanAbs),i:train.idx});
   }
   train.idx++; setTimeout(trainNextNote,400);
 }
 function trainFinish(){
   train.on=false;
   document.getElementById("trainBtn").innerHTML="<span>🎙️</span> Recommencer l'entraînement";
+  trainNeedleReset(); clearMelHighlight();
   const heard=train.results.filter(r=>r.score!==null);
   const avg=heard.length?Math.round(heard.reduce((a,r)=>a+r.score,0)/heard.length):0;
   unlock("excerpt1", heard.length>0);   // badge : un entraînement d'extrait mené au bout
   setTrainStatus(heard.length?`Terminé — justesse moyenne ${avg}/100`:"Je ne vous ai presque pas entendu. Rapprochez-vous du micro.");
+  colorMelResults(train.results);       // les notes de la partition se colorent selon le résultat
   document.getElementById("trainSummary").innerHTML=train.results.map(r=>{
     if(r.score===null) return `<span class="mchip miss">${r.name} ✕</span>`;
     const cls=r.score>=80?"good":r.score>=50?"mid":"bad";
@@ -1736,7 +1970,7 @@ function switchView(v){
   if(v==="sing")updateSingTarget();
   if(v==="progress")renderProgress();
   if(v==="tech")renderTech();
-  if(v==="excerpt"){renderExcStaff();updateExcReadout();renderMelody();syncTempoSeg();updatePageNav();}
+  if(v==="excerpt"){renderExcStaff();updateExcReadout();renderMelody();syncExcControls();updatePageNav();}
   if(v==="pass")passUI();
 }
 document.querySelectorAll("#bottomNav button").forEach(b=>b.onclick=()=>switchView(b.dataset.view));
@@ -1790,8 +2024,15 @@ document.getElementById("excDel").onclick=excDelLast;
 document.getElementById("excClear").onclick=excClear;
 document.getElementById("loopBtn").onclick=toggleLoop;
 document.getElementById("trainBtn").onclick=toggleTrain;
-document.getElementById("tempoSeg").querySelectorAll("button").forEach(b=>{
-  b.onclick=()=>{ excerpt.tempo=b.dataset.tempo; saveExcerpt(); syncTempoSeg(); };
+document.getElementById("sigSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ excerpt.sig=b.dataset.sig; saveExcerpt(); syncExcControls(); renderMelody(); }; // les barres de mesure se redessinent
+});
+document.getElementById("bpmRange").oninput=function(){
+  excerpt.bpm=parseInt(this.value,10); document.getElementById("bpmVal").textContent="♩ = "+excerpt.bpm; saveExcerpt();
+};
+document.getElementById("alterSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ state.excAlter=+b.dataset.alter; syncExcControls(); renderExcStaff(); updateExcReadout();
+    playNote(excCursorMidi(),0.8); }; // on entend tout de suite la note altérée
 });
 /* techniques & connaissances : bascule Exercices / Connaissances */
 document.getElementById("techSeg").querySelectorAll("button").forEach(b=>{
@@ -1837,6 +2078,8 @@ function applySettings(){
 }
 // Met les contrôles de la fenêtre en accord avec les réglages mémorisés.
 function syncSettingsUI(){
+  document.getElementById("timbreSeg").querySelectorAll("button").forEach(b=>
+    b.setAttribute("aria-pressed", b.dataset.timbre===(settings.timbre||"piano") ? "true":"false"));
   const v=document.getElementById("volRange"); v.value=settings.volume; document.getElementById("volVal").textContent=Math.round(settings.volume*100)+"%";
   const d=document.getElementById("diapRange"); d.value=settings.diapason; document.getElementById("diapVal").textContent=settings.diapason+" Hz";
   document.getElementById("setNotation").textContent=settings.notation==="fr"?"Do Ré Mi":"C D E";
@@ -1849,6 +2092,11 @@ document.getElementById("openSettings").onclick=openSettings;
 document.getElementById("setClose").onclick=closeSettings;
 document.getElementById("setDone").onclick=closeSettings;
 settingsModal.onclick=(e)=>{ if(e.target===settingsModal) closeSettings(); }; // clic sur le fond = fermer
+document.getElementById("timbreSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ settings.timbre=b.dataset.timbre; saveSettings(); syncSettingsUI();
+    playNote(60,1.0);   // aperçu immédiat du nouveau son (Do4)
+  };
+});
 document.getElementById("volRange").oninput=function(){
   settings.volume=parseFloat(this.value); document.getElementById("volVal").textContent=Math.round(settings.volume*100)+"%";
   if(outGain) outGain.gain.value=1.35*settings.volume; saveSettings();
