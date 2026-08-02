@@ -250,7 +250,7 @@
   <div id="clefRow">
     <p class="panel-title">Clé</p>
     <div class="seg" id="clefSeg">
-      <button data-clef="treble" aria-pressed="false">Clé de sol<small>à hauteur réelle</small></button>
+      <button data-clef="treble" aria-pressed="false">Clé de sol<small>voix de femmes · hauteur réelle</small></button>
       <button data-clef="tenor8" aria-pressed="true">Sol ténor<small>sonne 1 octave + bas</small></button>
       <button data-clef="bass" aria-pressed="false">Clé de fa<small>baryton / basse</small></button>
     </div>
@@ -298,14 +298,20 @@
       <p class="q" id="quizQ">Écoutez, chantez, puis choisissez la note.</p>
       <button class="play" id="playQuiz" style="margin:0 auto 16px;max-width:230px;"><span>♪</span> Rejouer</button>
       <div class="choices" id="quizChoices"></div>
+      <div id="quizStaffBox" class="hide" style="margin-top:12px;">
+        <div class="sheet" style="padding:6px 4px;"><svg id="svgQuiz" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid meet"></svg></div>
+        <div class="notemeta" id="quizStaffLbl" style="margin-top:5px;"></div>
+      </div>
       <div class="score" id="quizScore">Score : 0 / 0</div>
       <button class="ghost-btn" id="quizNext" style="margin-top:14px;">Nouvelle note</button>
+      <button class="ghost-btn" id="quizReset" style="margin-top:14px;margin-left:8px;">Score à zéro</button>
     </div>
     <p class="sub" style="text-align:center;">Chantez avant de répondre — c'est l'exercice qui compte le plus.</p>
   </section>
 
   <!-- CHANTER -->
   <section id="view-sing" class="hide">
+    <div class="sheet"><svg id="svgSing" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid meet"></svg></div>
     <div class="readout">
       <div class="notemeta" style="margin-bottom:4px;">Note à chanter</div>
       <div class="notename" id="singTarget">—</div>
@@ -315,6 +321,11 @@
       <button class="nav-btn" id="singPrev" aria-label="cible précédente">◀</button>
       <button class="play secondary" id="singHear"><span>♪</span> Écouter la cible</button>
       <button class="nav-btn" id="singNext" aria-label="cible suivante">▶</button>
+    </div>
+    <div class="seg" id="singAlterSeg">
+      <button data-alter="-1" aria-label="bémol">♭<small>bémol</small></button>
+      <button data-alter="0" aria-pressed="true" aria-label="bécarre">♮<small>naturel</small></button>
+      <button data-alter="1" aria-label="dièse">♯<small>dièse</small></button>
     </div>
 
     <div class="opts">
@@ -422,6 +433,9 @@
       <button data-voice="basse">Basse<small>passage vers Do4</small></button>
       <button data-voice="baryton">Baryton<small>passage vers Mi4</small></button>
       <button data-voice="tenor" aria-pressed="true">Ténor<small>passage vers Sol4</small></button>
+      <button data-voice="alto">Alto<small>passage vers Ré5</small></button>
+      <button data-voice="mezzo">Mezzo<small>passage vers Mi5</small></button>
+      <button data-voice="soprano">Soprano<small>passage vers Fa♯5</small></button>
     </div>
 
     <div class="card" style="text-align:left;padding:13px 15px;">
@@ -688,7 +702,7 @@ const CLEFS={
   tenor8:{name:"sol8",bottom:["E",4], range:[["C",4],["A",5]], shift:-12,glyph:"𝄞"},
   bass:  {name:"fa",  bottom:["G",2], range:[["F",2],["E",4]], shift:0,  glyph:"𝄢"}
 };
-let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false,excAlter:0};
+let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false,excAlter:0,singAlter:0};
 /* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
 let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false,voiceType:"tenor",timbre:"piano"};
 function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
@@ -787,7 +801,7 @@ function quizDistractors(targetLetter,n,mode){
 }
 function newNoteQuiz(){
   quiz.mode="notes";
-  const p=state.notes; quiz.target=p[Math.floor(Math.random()*p.length)]; quiz.answered=false;
+  const p=state.notes; quiz.target=p[Math.floor(Math.random()*p.length)]; quiz.answered=false; hideQuizStaff();
   const lvl=settings.quizLevel;                       // "easy" | "medium" | "hard"
   const nTotal=lvl==="hard"?6:4;                       // nombre total de propositions
   const mode=lvl==="easy"?"far":lvl==="hard"?"near":"random";
@@ -814,7 +828,7 @@ const INTERVALS=[
 const INTERVAL_POOLS={ easy:[4,7,12], medium:[2,3,4,5,7,9,12], hard:[1,2,3,4,5,6,7,8,9,10,11,12] };
 const intervalName=s=>{const it=INTERVALS.find(x=>x.s===s);return it?it.n:s+" demi-tons";};
 function newIntervalQuiz(){
-  quiz.mode="intervals"; quiz.answered=false;
+  quiz.mode="intervals"; quiz.answered=false; hideQuizStaff();
   const lvl=settings.quizLevel, pool=INTERVAL_POOLS[lvl]||INTERVAL_POOLS.medium;
   const nChoices=lvl==="hard"?6:(lvl==="easy"?pool.length:4);
   quiz.intervalSemi=pool[Math.floor(Math.random()*pool.length)];
@@ -837,6 +851,32 @@ function playInterval(){
   playNote(quiz.rootMidi,0.9);                          // première note
   setTimeout(()=>playNote(quiz.rootMidi+quiz.intervalSemi,1.2),750); // seconde note, après un court silence
 }
+/* Affichage du score du quiz, avec pourcentage de réussite. */
+function updateQuizScore(){
+  const pct=prog.quizTotal?` · ${Math.round(prog.quizCorrect/prog.quizTotal*100)} % de réussite`:"";
+  document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}${pct}`;
+}
+/* Dessine 1 ou 2 notes sur la portée du quiz (révélée après la réponse). */
+function renderQuizStaff(items,label){
+  const svg=document.getElementById("svgQuiz"); svg.innerHTML=""; const c=CLEFS[state.clef];
+  for(let i=0;i<5;i++) svg.appendChild(el("line",{x1:STAFF.x0,y1:lineY(i),x2:STAFF.x1,y2:lineY(i),stroke:"var(--paper-line)","stroke-width":1.4}));
+  drawClef(svg,c.name,STAFF.x0+2);
+  const db=diatonic(c.bottom[0],c.bottom[1]),dtop=db+8;
+  const xs=items.length>1?[150,235]:[190];
+  items.forEach((it,i)=>{
+    const cx=xs[i], cy=yForDia(it.dia);
+    for(let d=dtop+2;d<=it.dia;d+=2){const y=yForDia(d);svg.appendChild(el("line",{x1:cx-15,y1:y,x2:cx+15,y2:y,stroke:"var(--paper-line)","stroke-width":1.4}));}
+    for(let d=db-2;d>=it.dia;d-=2){const y=yForDia(d);svg.appendChild(el("line",{x1:cx-15,y1:y,x2:cx+15,y2:y,stroke:"var(--paper-line)","stroke-width":1.4}));}
+    if(it.alter){const a=el("text",{x:cx-15,y:cy+5.5,"font-size":17,fill:"var(--brass)","text-anchor":"middle","font-weight":"600"});a.textContent=ALTER_SYM[String(it.alter)];svg.appendChild(a);}
+    svg.appendChild(el("ellipse",{cx:cx,cy:cy,rx:8.4,ry:6,fill:"var(--brass)",transform:`rotate(-18 ${cx} ${cy})`}));
+    const up=it.dia<db+4;
+    if(up) svg.appendChild(el("line",{x1:cx+7.6,y1:cy-1,x2:cx+7.6,y2:cy-34,stroke:"var(--brass)","stroke-width":1.8}));
+    else svg.appendChild(el("line",{x1:cx-7.6,y1:cy+1,x2:cx-7.6,y2:cy+34,stroke:"var(--brass)","stroke-width":1.8}));
+  });
+  document.getElementById("quizStaffLbl").textContent=label||"";
+  document.getElementById("quizStaffBox").classList.remove("hide");
+}
+function hideQuizStaff(){ const b=document.getElementById("quizStaffBox"); if(b) b.classList.add("hide"); }
 function answerInterval(semi,btn){
   // Déjà répondu : on rejoue l'intervalle touché (racine + note de l'écart) pour comparer.
   if(quiz.answered){ playNote(quiz.rootMidi,0.7); setTimeout(()=>playNote(quiz.rootMidi+semi,1.0),650); return; }
@@ -845,8 +885,12 @@ function answerInterval(semi,btn){
   if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10); unlock("ear25", prog.quizCorrect>=25);}
   else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===intervalName(quiz.intervalSemi))b.classList.add("correct");});}
   prog.quizTotal++; save();
-  document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
+  updateQuizScore();
   document.getElementById("quizQ").textContent=(correct?"Juste ! Belle oreille.":`C'était une ${intervalName(quiz.intervalSemi).toLowerCase()}.`)+" Touchez une réponse pour l'écouter.";
+  // Les deux notes de l'intervalle, révélées sur la portée
+  const w1=melWritten({midi:quiz.rootMidi,alter:0}), w2=melWritten({midi:quiz.rootMidi+quiz.intervalSemi,alter:0});
+  const c=CLEFS[state.clef], n1=nameFromMidi(quiz.rootMidi-c.shift), n2=nameFromMidi(quiz.rootMidi+quiz.intervalSemi-c.shift);
+  renderQuizStaff([w1,w2],`${n1.disp}${n1.oct} → ${n2.disp}${n2.oct} : ${intervalName(quiz.intervalSemi).toLowerCase()}`);
 }
 /* Met le sélecteur de niveau en accord avec le réglage mémorisé. */
 function syncLevelSeg(){
@@ -870,8 +914,10 @@ function answerQuiz(letter,btn){
   if(correct){btn.classList.add("correct"); prog.quizCorrect++; addXP(10); unlock("ear10", prog.quizCorrect>=10); unlock("ear25", prog.quizCorrect>=25);}
   else{btn.classList.add("wrong");[...document.getElementById("quizChoices").children].forEach(b=>{if(b.textContent===(state.notation==="fr"?FR[quiz.target.letter]:quiz.target.letter))b.classList.add("correct");});}
   prog.quizTotal++; save();
-  document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
+  updateQuizScore();
   document.getElementById("quizQ").textContent=(correct?"Juste ! Belle oreille.":`C'était ${state.notation==="fr"?FR[quiz.target.letter]:quiz.target.letter}.`)+" Touchez une réponse pour l'écouter.";
+  // La note jouée, révélée sur la portée
+  renderQuizStaff([{dia:quiz.target.dia,alter:0}],`Sur la portée : ${noteLabel(quiz.target)}${quiz.target.oct}`);
 }
 
 /* ================= PIANO ================= */
@@ -938,7 +984,7 @@ function autoCorrelate(buf,sr){
   if(a) T0=T0-bb/(2*a);
   const f=sr/T0; if(f<60||f>1200) return -1; return f;
 }
-function singTargetMidi(){const n=state.notes[state.singIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+c.shift;}
+function singTargetMidi(){const n=state.notes[state.singIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+(state.singAlter||0)+c.shift;}
 let collecting=false, samples=[];
 function loopMic(){
   mic.raf=requestAnimationFrame(loopMic);
@@ -1041,10 +1087,14 @@ function barRow(label,val,max,right){
   return `<div class="bar-row"><div class="bl">${label}</div><div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div><div class="bv">${right}</div></div>`;
 }
 function updateSingTarget(){
-  const n=state.notes[state.singIdx],c=CLEFS[state.clef];
-  document.getElementById("singTarget").textContent=noteLabel(n)+n.oct;
-  if(c.shift){const so=nameFromMidi(midiOf(n.letter,n.oct)+c.shift);document.getElementById("singTargetMeta").textContent=`écrit ${noteLabel(n)}${n.oct} · à chanter : ${so.disp}${so.oct}`;}
-  else document.getElementById("singTargetMeta").textContent=`à chanter : ${noteLabel(n)}${n.oct}`;
+  const n=state.notes[state.singIdx],c=CLEFS[state.clef],alt=state.singAlter||0;
+  const written=noteLabel(n)+ALTER_SYM[String(alt)]+n.oct;   // nom écrit, altération comprise
+  document.getElementById("singTarget").textContent=written;
+  if(c.shift){const so=nameFromMidi(singTargetMidi());document.getElementById("singTargetMeta").textContent=`écrit ${written} · à chanter : ${so.disp}${so.oct}`;}
+  else document.getElementById("singTargetMeta").textContent=`à chanter : ${written}`;
+  renderStaffInto("svgSing", n, false, alt);                  // la cible sur la portée
+  document.getElementById("singAlterSeg").querySelectorAll("button").forEach(b=>
+    b.setAttribute("aria-pressed", +b.dataset.alter===alt ? "true":"false"));
 }
 function singGo(d){state.singIdx=Math.max(0,Math.min(state.notes.length-1,state.singIdx+d));updateSingTarget();if(state.droneOn)startDrone(singTargetMidi());document.getElementById("scoreCardBox").innerHTML="";}
 
@@ -1467,7 +1517,10 @@ function trainFinish(){
 const PASS_VOICES={
   basse:  {label:"Basse",  P:60},   // P = note du passage (hauteur réelle, MIDI) : Do4
   baryton:{label:"Baryton",P:64},   // Mi4
-  tenor:  {label:"Ténor",  P:67}    // Sol4
+  tenor:  {label:"Ténor",  P:67},   // Sol4
+  alto:   {label:"Alto",   P:74},   // Ré5
+  mezzo:  {label:"Mezzo",  P:76},   // Mi5
+  soprano:{label:"Soprano",P:78}    // Fa♯5
 };
 /* Paliers : bornes en demi-tons PAR RAPPORT À P, durée (s), nb de cloches. */
 const PASS_LEVELS=[
@@ -1993,6 +2046,15 @@ document.getElementById("btnPiano").onclick=function(){const box=document.getEle
 /* oreille */
 document.getElementById("playQuiz").onclick=playQuizNote;
 document.getElementById("quizNext").onclick=newQuiz;
+/* Remise à zéro du score du quiz (en deux temps pour éviter les faux clics).
+   Ne touche ni aux XP, ni aux badges — seulement au compteur affiché. */
+let quizResetArmed=null;
+document.getElementById("quizReset").onclick=function(){
+  if(quizResetArmed){ clearTimeout(quizResetArmed); quizResetArmed=null;
+    prog.quizCorrect=0; prog.quizTotal=0; save(); updateQuizScore(); this.textContent="Score à zéro"; return; }
+  this.textContent="Confirmer ?";
+  quizResetArmed=setTimeout(()=>{ quizResetArmed=null; this.textContent="Score à zéro"; },3000);
+};
 document.getElementById("lvlSeg").querySelectorAll("button").forEach(b=>{
   b.onclick=()=>{ settings.quizLevel=b.dataset.lvl; saveSettings(); syncLevelSeg(); newQuiz(); };
 });
@@ -2003,6 +2065,10 @@ document.getElementById("modeSeg").querySelectorAll("button").forEach(b=>{
 document.getElementById("singPrev").onclick=()=>singGo(-1);
 document.getElementById("singNext").onclick=()=>singGo(1);
 document.getElementById("singHear").onclick=()=>playNote(singTargetMidi());
+document.getElementById("singAlterSeg").querySelectorAll("button").forEach(b=>{
+  b.onclick=()=>{ state.singAlter=+b.dataset.alter; updateSingTarget();
+    if(state.droneOn) startDrone(singTargetMidi()); };   // le bourdon suit l'altération
+});
 document.getElementById("swDrone").onclick=function(){
   state.droneOn=!state.droneOn; this.setAttribute("aria-pressed",state.droneOn);
   if(state.droneOn) startDrone(singTargetMidi()); else stopDrone();
@@ -2049,7 +2115,7 @@ document.getElementById("techSeg").querySelectorAll("button").forEach(b=>{
 /* progrès */
 document.getElementById("resetBtn").onclick=function(){
   prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[],pass:{},passWins:0,passDone6:false};
-  save();renderProgress();document.getElementById("quizScore").textContent="Score : 0 / 0";
+  save();renderProgress();updateQuizScore();
 };
 /* clavier physique */
 document.addEventListener("keydown",e=>{
@@ -2116,7 +2182,7 @@ state.notation=settings.notation||"fr";                 // notation mémorisée
 document.getElementById("btnNotation").textContent=state.notation==="fr"?"Do Ré Mi":"C D E";
 applySettings();
 loadExcerpt(); loadExcerptImg(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
-document.getElementById("quizScore").textContent=`Score : ${prog.quizCorrect} / ${prog.quizTotal}`;
+updateQuizScore();
 </script>
 
 <!-- ===== Enregistrement du service worker (rend l'app hors-ligne) ===== -->
