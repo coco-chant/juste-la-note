@@ -58,6 +58,9 @@
   .set-row .sl{font-size:14px;font-weight:600;}
   .set-row .sh{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4;}
   .set-row input[type=range]{width:100%;margin-top:11px;accent-color:var(--brass);height:24px;}
+  .set-row input[type=email]{width:100%;margin-top:10px;background:var(--ink-3);border:1px solid var(--line);
+    border-radius:10px;padding:11px 12px;color:var(--text);font-family:inherit;font-size:14px;}
+  .set-row input[type=email]:focus{outline:none;border-color:var(--brass);}
   .set-val{color:var(--brass-soft);font-variant-numeric:tabular-nums;font-weight:400;}
   body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after{animation-duration:.001ms!important;transition-duration:.001ms!important;}
   .kicker{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--brass);font-weight:600;margin:0 0 4px;}
@@ -205,6 +208,11 @@
   /* extrait : image de référence + puces de mélodie */
   #excImg{width:100%;border-radius:10px;display:block;}
   #svgExc{cursor:pointer;}
+  /* barre "Mes partitions" */
+  select.ghost-btn{appearance:none;-webkit-appearance:none;background:var(--ink-2);text-align:center;
+    text-align-last:center;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .exc-bar{display:flex;gap:8px;align-items:stretch;}
+  .exc-bar .ghost-btn{padding:10px 12px;flex:0 0 auto;}
   .mchip{display:inline-block;background:var(--ink-3);border:1px solid var(--line);border-radius:8px;
     padding:5px 9px;margin:0 6px 6px 0;font-size:13px;font-variant-numeric:tabular-nums;transition:.12s;}
   .mchip small{color:var(--muted);font-weight:400;font-size:10.5px;}
@@ -362,8 +370,16 @@
 
   <!-- EXTRAIT (import + saisie mélodie + boucle) -->
   <section id="view-excerpt" class="hide">
+    <p class="panel-title">Mes partitions</p>
+    <div class="exc-bar">
+      <select id="excSelect" class="ghost-btn" style="flex:1;" aria-label="choisir la partition"></select>
+      <button class="ghost-btn" id="excNew" aria-label="nouvelle partition">＋</button>
+      <button class="ghost-btn" id="excRename" aria-label="renommer la partition">✏️</button>
+      <button class="ghost-btn" id="excDelete" aria-label="supprimer la partition">🗑</button>
+    </div>
+
     <input type="file" id="excFile" accept="image/*,application/pdf,.pdf" style="display:none">
-    <button class="ghost-btn" id="excPick" style="width:100%;"><span>🖼️</span> Choisir un extrait (photo ou PDF)</button>
+    <button class="ghost-btn" id="excPick" style="width:100%;margin-top:8px;"><span>🖼️</span> Choisir un extrait (photo ou PDF)</button>
     <div id="excError" class="notice hide" style="margin-top:8px;"></div>
     <div id="excImgBox" class="hide" style="margin-top:8px;">
       <div class="sheet" style="padding:6px;"><img id="excImg" alt="Extrait de partition importé"></div>
@@ -540,7 +556,25 @@
       <div><div>Réduire les animations</div><div class="hint">Confort visuel, moins de mouvements</div></div>
       <button class="switch" id="setReduce" aria-pressed="false" role="switch" aria-label="Réduire les animations"></button>
     </div>
-    <button class="play" id="setDone" style="margin-top:16px;">Fermer</button>
+    <div class="set-row" style="border-bottom:none;">
+      <div class="sl">Compte <span class="set-val" id="accStatus"></span></div>
+      <div class="sh">Synchronisez votre progression (XP, badges, historique, paliers de passaggio) entre vos appareils. Les réglages et les partitions restent propres à chaque appareil.</div>
+      <div id="accLoggedOut">
+        <input type="email" id="accEmail" placeholder="votre@email.fr" autocomplete="email" inputmode="email">
+        <button class="ghost-btn" id="accSend" style="width:100%;margin-top:8px;">Recevoir mon lien de connexion</button>
+        <div class="sh" id="accMsg" style="min-height:15px;"></div>
+        <div class="sh" style="opacity:.75;">Pas de mot de passe : un lien sécurisé vous est envoyé par e-mail. En vous connectant, votre e-mail et votre progression sont stockés sur Supabase (serveurs en Europe).</div>
+      </div>
+      <div id="accLoggedIn" class="hide">
+        <div class="sh" id="accWho" style="color:var(--text);"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="ghost-btn" id="accSyncNow" style="flex:1;">Synchroniser</button>
+          <button class="ghost-btn" id="accLogout" style="flex:1;">Se déconnecter</button>
+        </div>
+        <div class="sh" id="accSyncMsg" style="min-height:15px;"></div>
+      </div>
+    </div>
+    <button class="play" id="setDone" style="margin-top:8px;">Fermer</button>
   </div>
 </div>
 
@@ -1098,28 +1132,92 @@ function updateSingTarget(){
 }
 function singGo(d){state.singIdx=Math.max(0,Math.min(state.notes.length-1,state.singIdx+d));updateSingTarget();if(state.droneOn)startDrone(singTargetMidi());document.getElementById("scoreCardBox").innerHTML="";}
 
-/* ================= EXTRAIT (import + saisie + boucle) ================= */
+/* ================= EXTRAIT (import + saisie + boucle) =================
+   Plusieurs partitions : un index nommé dans localStorage (léger), et les
+   fichiers lourds (image affichée, PDF) dans IndexedDB, la « grande » base
+   locale du navigateur — bien plus vaste que localStorage. */
+let idb=null;
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    if(idb) return res(idb);
+    const r=indexedDB.open("justenote",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("files");
+    r.onsuccess=()=>{idb=r.result;res(idb);};
+    r.onerror=()=>rej(r.error);
+  });
+}
+async function idbSet(k,v){const db=await idbOpen();return new Promise((res,rej)=>{const t=db.transaction("files","readwrite");t.objectStore("files").put(v,k);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});}
+async function idbGet(k){const db=await idbOpen();return new Promise((res,rej)=>{const q=db.transaction("files","readonly").objectStore("files").get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+async function idbDel(k){const db=await idbOpen();return new Promise((res,rej)=>{const t=db.transaction("files","readwrite");t.objectStore("files").delete(k);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});}
+
+let excerpts=[];            // index [{id,name}]
+let activeExc=null;         // id de la partition affichée
 let excerpt={melody:[],sig:"4/4",bpm:80};
-function loadExcerpt(){
-  try{const r=localStorage.getItem("justenote_excerpt");if(r)excerpt=Object.assign(excerpt,JSON.parse(r));}catch(e){}
-  // Migration : l'ancien réglage lent/moyen/rapide devient un vrai tempo en BPM.
+function saveExcIndex(){try{localStorage.setItem("justenote_excerpts",JSON.stringify(excerpts));localStorage.setItem("justenote_excerpt_active",activeExc);}catch(e){}}
+function saveExcerpt(){if(activeExc)try{localStorage.setItem("justenote_excerpt_"+activeExc,JSON.stringify(excerpt));}catch(e){}}
+function normalizeExcerpt(){
   if(excerpt.tempo){ excerpt.bpm={lent:55,moyen:80,rapide:120}[excerpt.tempo]||80; delete excerpt.tempo; }
   if(!excerpt.sig) excerpt.sig="4/4";
   if(!excerpt.bpm) excerpt.bpm=80;
+  if(!Array.isArray(excerpt.melody)) excerpt.melody=[];
 }
-function saveExcerpt(){try{localStorage.setItem("justenote_excerpt",JSON.stringify(excerpt));}catch(e){}}
+/* Remplit le menu déroulant des partitions. */
+function renderExcSelect(){
+  const sel=document.getElementById("excSelect"); sel.innerHTML="";
+  excerpts.forEach(x=>{const o=document.createElement("option");o.value=x.id;o.textContent=x.name;if(x.id===activeExc)o.selected=true;sel.appendChild(o);});
+}
+/* Charge la partition active : mélodie (localStorage) + image/PDF (IndexedDB). */
+async function loadActiveExcerpt(){
+  excerpt={melody:[],sig:"4/4",bpm:80};
+  try{const r=localStorage.getItem("justenote_excerpt_"+activeExc);if(r)excerpt=Object.assign(excerpt,JSON.parse(r));}catch(e){}
+  normalizeExcerpt();
+  // remise à zéro de l'affichage image/PDF
+  excPdf=null; excPdfCount=0; excPdfPage=1;
+  document.getElementById("excImgBox").classList.add("hide");
+  document.getElementById("excImg").removeAttribute("src");
+  document.getElementById("excError").className="notice hide";
+  updatePageNav();
+  renderMelody(); syncExcControls();
+  let hasImg=false;
+  try{const d=await idbGet("img_"+activeExc); if(d){showExcImg(d);hasImg=true;}}catch(e){}
+  try{const p=await idbGet("pdf_"+activeExc); if(p)reopenPdf(p,hasImg);}catch(e){}
+}
+/* Premier chargement : migration de l'ancien format (une seule partition), puis index. */
+async function initExcerpts(){
+  try{excerpts=JSON.parse(localStorage.getItem("justenote_excerpts")||"[]");}catch(e){excerpts=[];}
+  if(!excerpts.length){
+    // Migration : on récupère l'éventuelle partition unique de l'ancienne version.
+    excerpts=[{id:"p1",name:"Partition 1"}]; activeExc="p1";
+    try{const old=localStorage.getItem("justenote_excerpt");
+      if(old){localStorage.setItem("justenote_excerpt_p1",old);localStorage.removeItem("justenote_excerpt");}}catch(e){}
+    try{const oi=localStorage.getItem("justenote_excerpt_img");
+      if(oi){await idbSet("img_p1",oi);localStorage.removeItem("justenote_excerpt_img");}}catch(e){}
+    try{const op=localStorage.getItem("justenote_excerpt_pdf");
+      if(op){await idbSet("pdf_p1",op);localStorage.removeItem("justenote_excerpt_pdf");}}catch(e){}
+    saveExcIndex();
+  }
+  activeExc=localStorage.getItem("justenote_excerpt_active")||excerpts[0].id;
+  if(!excerpts.some(x=>x.id===activeExc)) activeExc=excerpts[0].id;
+  renderExcSelect();
+  await loadActiveExcerpt();
+}
+/* Changement de partition affichée. */
+async function switchExcerpt(id){
+  if(id===activeExc) return;
+  if(loop.on) loopStop(); if(train.on) trainStop();
+  activeExc=id; saveExcIndex(); renderExcSelect();
+  document.getElementById("trainBox").classList.add("hide");
+  await loadActiveExcerpt();
+}
 
 /* --- Image de référence (réduite puis conservée localement) --- */
 function showExcImg(dataURL){document.getElementById("excImg").src=dataURL;document.getElementById("excImgBox").classList.remove("hide");}
-function loadExcerptImg(){
-  try{const d=localStorage.getItem("justenote_excerpt_img");if(d)showExcImg(d);}catch(e){}
-  try{const p=localStorage.getItem("justenote_excerpt_pdf");if(p)reopenPdf(p);}catch(e){} // réactive la navigation si un PDF est conservé
-}
-// Conserve l'extrait localement (avec message si la mémoire du navigateur est pleine).
+// Conserve l'extrait dans la base locale (avec message si ça échoue).
 function storeExcImg(data){
-  const err=document.getElementById("excError");
-  try{ localStorage.setItem("justenote_excerpt_img",data); }
-  catch(x){ err.className="notice"; err.textContent="Extrait affiché, mais trop lourd pour être conservé à la fermeture."; }
+  idbSet("img_"+activeExc,data).catch(()=>{
+    const err=document.getElementById("excError");
+    err.className="notice"; err.textContent="Extrait affiché, mais impossible de le conserver (stockage local indisponible).";
+  });
   showExcImg(data);
 }
 // Réduit un canvas à "max" px sur son plus grand côté, puis renvoie un JPEG (data URL).
@@ -1138,8 +1236,8 @@ function handleExcFile(file){
     const img=new Image();
     img.onload=()=>{
       // On importe une photo : on efface un éventuel PDF précédent (et sa navigation).
-      excPdf=null; excPdfCount=0; excPdfPage=1; delete excerpt.pdfPage;
-      try{ localStorage.removeItem("justenote_excerpt_pdf"); }catch(x){}
+      excPdf=null; excPdfCount=0; excPdfPage=1; delete excerpt.pdfPage; saveExcerpt();
+      idbDel("pdf_"+activeExc).catch(()=>{});
       updatePageNav();
       const cv=document.createElement("canvas"); cv.width=img.width; cv.height=img.height;
       cv.getContext("2d").drawImage(img,0,0);
@@ -1209,28 +1307,31 @@ async function importPdf(file){
     const buf=await file.arrayBuffer();
     excPdf=await withTimeout(pdfjsLib.getDocument({data:buf.slice(0)}).promise,20000); // copie (getDocument « vide » le buffer)
     excPdfCount=excPdf.numPages; excPdfPage=1;
-    // On tente de conserver le PDF pour pouvoir renaviguer après réouverture de l'app.
-    try{ const d=await blobToDataURL(new Blob([buf],{type:"application/pdf"})); if(d) localStorage.setItem("justenote_excerpt_pdf",d); }
-    catch(e){ try{localStorage.removeItem("justenote_excerpt_pdf");}catch(_){} }
+    // On conserve le PDF (base locale) pour pouvoir renaviguer après réouverture de l'app.
+    try{ const d=await blobToDataURL(new Blob([buf],{type:"application/pdf"})); if(d) await idbSet("pdf_"+activeExc,d); }
+    catch(e){ idbDel("pdf_"+activeExc).catch(()=>{}); }
     await renderPdfPage(1);
   }catch(e){
     excPdf=null; excPdfCount=0;
     err.className="notice"; err.textContent="Impossible de lire ce PDF ici. Une connexion internet est nécessaire la première fois (outil PDF) ; sinon, faites une capture d'écran de la page et importez-la en photo.";
   }
 }
-// À la réouverture de l'app : si un PDF est stocké, on le rouvre pour réactiver la navigation.
-async function reopenPdf(dataURL){
+// À la réouverture (ou au changement de partition) : si un PDF est stocké,
+// on le rouvre pour réactiver la navigation page à page.
+async function reopenPdf(dataURL,hasImg){
+  const forId=activeExc;                        // garde-fou si on change de partition pendant l'ouverture
   try{
     await loadPdfJs();
-    excPdf=await pdfjsLib.getDocument({data:dataURLToArrayBuffer(dataURL)}).promise;
-    excPdfCount=excPdf.numPages;
+    const doc=await pdfjsLib.getDocument({data:dataURLToArrayBuffer(dataURL)}).promise;
+    if(activeExc!==forId) return;
+    excPdf=doc; excPdfCount=doc.numPages;
     excPdfPage=Math.max(1,Math.min(excPdfCount,excerpt.pdfPage||1));
     updatePageNav();
-    if(!localStorage.getItem("justenote_excerpt_img")) renderPdfPage(excPdfPage);
+    if(!hasImg) renderPdfPage(excPdfPage);
   }catch(e){ /* hors-ligne : on garde l'image affichée, navigation indisponible */ }
 }
 function removeExcImg(){
-  try{ localStorage.removeItem("justenote_excerpt_img"); localStorage.removeItem("justenote_excerpt_pdf"); }catch(e){}
+  idbDel("img_"+activeExc).catch(()=>{}); idbDel("pdf_"+activeExc).catch(()=>{});
   delete excerpt.pdfPage; saveExcerpt();
   excPdf=null; excPdfCount=0; excPdfPage=1;
   document.getElementById("excImgBox").classList.add("hide");
@@ -1731,7 +1832,7 @@ const BADGES=[
 ];
 let prog={xp:0,evals:0,bestCents:null,streak:0,bestStreak:0,quizCorrect:0,quizTotal:0,badges:{},sungLow:false,sungHigh:false,history:[],pass:{},passWins:0,passDone6:false};
 function load(){try{const r=localStorage.getItem("justenote_v2");if(r)prog=Object.assign(prog,JSON.parse(r));}catch(e){}}
-function save(){try{localStorage.setItem("justenote_v2",JSON.stringify(prog));}catch(e){}}
+function save(){try{localStorage.setItem("justenote_v2",JSON.stringify(prog));}catch(e){} queueSync();}
 function addXP(n){prog.xp+=n;save();}
 function unlock(id,cond){if(cond&&!prog.badges[id]){prog.badges[id]=true;save();}}
 function levelInfo(){let lv=0;for(let i=0;i<LEVELS.length;i++)if(prog.xp>=LEVELS[i].xp)lv=i;
@@ -2076,6 +2177,36 @@ document.getElementById("swDrone").onclick=function(){
 document.getElementById("micBtn").onclick=startMic;
 document.getElementById("evalBtn").onclick=evaluate;
 /* extrait */
+/* --- Mes partitions : choisir, créer, renommer, supprimer --- */
+document.getElementById("excSelect").onchange=function(){ switchExcerpt(this.value); };
+document.getElementById("excNew").onclick=async function(){
+  const name=(prompt("Nom de la nouvelle partition :","Partition "+(excerpts.length+1))||"").trim();
+  if(!name) return;
+  const id="p"+Date.now().toString(36);
+  excerpts.push({id,name}); saveExcIndex();
+  if(loop.on) loopStop(); if(train.on) trainStop();
+  activeExc=id; saveExcIndex(); renderExcSelect();
+  document.getElementById("trainBox").classList.add("hide");
+  await loadActiveExcerpt(); saveExcerpt();
+};
+document.getElementById("excRename").onclick=function(){
+  const x=excerpts.find(e=>e.id===activeExc); if(!x) return;
+  const name=(prompt("Nouveau nom :",x.name)||"").trim();
+  if(!name) return;
+  x.name=name; saveExcIndex(); renderExcSelect();
+};
+document.getElementById("excDelete").onclick=async function(){
+  const x=excerpts.find(e=>e.id===activeExc); if(!x) return;
+  if(!confirm(`Supprimer « ${x.name} » ?\nLa mélodie et l'image/PDF de cette partition seront effacés.`)) return;
+  try{localStorage.removeItem("justenote_excerpt_"+activeExc);}catch(e){}
+  idbDel("img_"+activeExc).catch(()=>{}); idbDel("pdf_"+activeExc).catch(()=>{});
+  excerpts=excerpts.filter(e=>e.id!==activeExc);
+  if(!excerpts.length) excerpts=[{id:"p"+Date.now().toString(36),name:"Partition 1"}]; // jamais zéro partition
+  if(loop.on) loopStop(); if(train.on) trainStop();
+  activeExc=excerpts[0].id; saveExcIndex(); renderExcSelect();
+  document.getElementById("trainBox").classList.add("hide");
+  await loadActiveExcerpt();
+};
 document.getElementById("excPick").onclick=()=>document.getElementById("excFile").click();
 document.getElementById("excFile").onchange=function(){ if(this.files&&this.files[0]) handleExcFile(this.files[0]); this.value=""; };
 document.getElementById("excRemove").onclick=removeExcImg;
@@ -2176,12 +2307,127 @@ document.getElementById("setReduce").onclick=function(){
   document.body.classList.toggle("reduce-motion",settings.reduceMotion); saveSettings();
 };
 
+/* ================= COMPTE & SYNCHRONISATION (Supabase) =================
+   Optionnel : sans compte, l'app reste 100 % locale, comme avant.
+   Connexion par « lien magique » envoyé par e-mail (pas de mot de passe).
+   Seule la PROGRESSION (prog) est synchronisée ; les réglages (volume,
+   timbre…) et les partitions restent propres à chaque appareil. */
+const SUPA_URL="";   // ← URL du projet Supabase (à remplir)
+const SUPA_KEY="";   // ← clé publique « anon » (à remplir)
+let supa=null, supaUser=null, syncTimer=null, supaReady=null;
+function accountConfigured(){ return !!(SUPA_URL&&SUPA_KEY); }
+function loadSupabase(){                       // bibliothèque chargée à la demande (comme pdf.js)
+  if(window.supabase) return Promise.resolve();
+  if(supaReady) return supaReady;
+  supaReady=new Promise((res,rej)=>{
+    const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js";
+    s.onload=res; s.onerror=()=>{supaReady=null;rej(new Error("cdn"));};
+    document.head.appendChild(s);
+  });
+  return supaReady;
+}
+async function initAccount(){
+  if(!accountConfigured()||supa) { updateAccountUI(); return; }
+  await loadSupabase();
+  supa=window.supabase.createClient(SUPA_URL,SUPA_KEY);
+  supa.auth.onAuthStateChange((ev,session)=>{
+    supaUser=(session&&session.user)||null; updateAccountUI();
+    if(supaUser&&(ev==="SIGNED_IN"||ev==="INITIAL_SESSION")) pullProgress();
+  });
+  const {data}=await supa.auth.getSession();
+  supaUser=(data.session&&data.session.user)||null;
+  updateAccountUI();
+}
+/* Au démarrage : on n'initialise le compte que si une session existe déjà
+   (ou si l'on revient d'un lien de connexion) — zéro réseau sinon. */
+function maybeInitAccount(){
+  if(!accountConfigured()) return;
+  const hasSession=Object.keys(localStorage).some(k=>k.startsWith("sb-")&&k.indexOf("auth-token")>=0);
+  const fromLink=location.hash.indexOf("access_token")>=0||location.search.indexOf("code=")>=0;
+  if(hasSession||fromLink) initAccount().catch(()=>updateAccountUI());
+}
+/* Fusion bienveillante : on garde le meilleur des deux appareils, on ne perd rien. */
+function mergeProgress(r){
+  if(!r) return;
+  prog.xp=Math.max(prog.xp||0,r.xp||0);
+  prog.evals=Math.max(prog.evals||0,r.evals||0);
+  if(r.bestCents!=null) prog.bestCents=(prog.bestCents==null)?r.bestCents:Math.min(prog.bestCents,r.bestCents);
+  prog.bestStreak=Math.max(prog.bestStreak||0,r.bestStreak||0);
+  prog.streak=Math.max(prog.streak||0,r.streak||0);
+  prog.quizCorrect=Math.max(prog.quizCorrect||0,r.quizCorrect||0);
+  prog.quizTotal=Math.max(prog.quizTotal||0,r.quizTotal||0);
+  Object.assign(prog.badges,r.badges||{});
+  prog.sungLow=prog.sungLow||!!r.sungLow; prog.sungHigh=prog.sungHigh||!!r.sungHigh;
+  const seen=new Set((prog.history||[]).map(e=>e.t));
+  (r.history||[]).forEach(e=>{ if(!seen.has(e.t)) prog.history.push(e); });
+  prog.history.sort((a,b)=>a.t-b.t); if(prog.history.length>300) prog.history=prog.history.slice(-300);
+  if(r.pass){ prog.pass=prog.pass||{};
+    for(const k in r.pass){ const L=prog.pass[k],R=r.pass[k];
+      if(!L) prog.pass[k]={lvl:R.lvl,wins:R.wins};
+      else if(R.lvl>L.lvl) prog.pass[k]={lvl:R.lvl,wins:R.wins};
+      else if(R.lvl===L.lvl) L.wins=Math.max(L.wins,R.wins); } }
+  prog.passWins=Math.max(prog.passWins||0,r.passWins||0);
+  prog.passDone6=prog.passDone6||!!r.passDone6;
+}
+async function pullProgress(){
+  if(!supa||!supaUser) return;
+  try{
+    const {data,error}=await supa.from("progress").select("data").eq("user_id",supaUser.id).maybeSingle();
+    if(error) throw error;
+    if(data&&data.data&&data.data.prog) mergeProgress(data.data.prog);
+    save();                                   // persiste la fusion (et déclenche l'envoi du résultat)
+    if(!document.getElementById("view-progress").classList.contains("hide")) renderProgress();
+    setSyncMsg("Synchronisé ✓");
+  }catch(e){ setSyncMsg("Synchronisation impossible (hors-ligne ?)"); }
+}
+async function pushProgress(){
+  if(!supa||!supaUser) return;
+  try{
+    const {error}=await supa.from("progress").upsert({user_id:supaUser.id,data:{prog},updated_at:new Date().toISOString()});
+    if(error) throw error;
+    setSyncMsg("Synchronisé ✓ "+new Date().toLocaleTimeString().slice(0,5));
+  }catch(e){ setSyncMsg("Envoi impossible (hors-ligne ?)"); }
+}
+/* Appelée par save() : envoie la progression 3 s après la dernière modification. */
+function queueSync(){ if(!supa||!supaUser) return; clearTimeout(syncTimer); syncTimer=setTimeout(pushProgress,3000); }
+document.addEventListener("visibilitychange",()=>{ if(document.hidden&&supa&&supaUser){clearTimeout(syncTimer);pushProgress();} });
+function setSyncMsg(t){ const e=document.getElementById("accSyncMsg"); if(e) e.textContent=t; }
+function setAccMsg(t){ const e=document.getElementById("accMsg"); if(e) e.textContent=t; }
+function updateAccountUI(){
+  const st=document.getElementById("accStatus");
+  document.getElementById("accLoggedOut").classList.toggle("hide",!!supaUser);
+  document.getElementById("accLoggedIn").classList.toggle("hide",!supaUser);
+  if(supaUser){ st.textContent="connecté"; document.getElementById("accWho").textContent="Connecté : "+(supaUser.email||""); }
+  else st.textContent=accountConfigured()?"non connecté":"bientôt disponible";
+}
+document.getElementById("accSend").onclick=async function(){
+  const email=(document.getElementById("accEmail").value||"").trim();
+  if(!/.+@.+\..+/.test(email)){ setAccMsg("Adresse e-mail invalide."); return; }
+  if(!accountConfigured()){ setAccMsg("Le service de compte n'est pas encore configuré — bientôt disponible."); return; }
+  this.disabled=true; setAccMsg("Envoi du lien…");
+  try{
+    await initAccount();
+    const {error}=await supa.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
+    if(error) throw error;
+    setAccMsg("Lien envoyé ! Ouvrez l'e-mail sur CET appareil et touchez le lien pour vous connecter.");
+  }catch(e){ setAccMsg("Envoi impossible : "+((e&&e.message)||"vérifiez la connexion.")); }
+  this.disabled=false;
+};
+document.getElementById("accSyncNow").onclick=async function(){ setSyncMsg("Synchronisation…"); await pullProgress(); await pushProgress(); };
+document.getElementById("accLogout").onclick=async function(){
+  try{ if(supa) await supa.auth.signOut(); }catch(e){}
+  supaUser=null; updateAccountUI(); setAccMsg("");
+  // les données locales restent sur l'appareil
+};
+
 /* init */
 load(); loadSettings();
 state.notation=settings.notation||"fr";                 // notation mémorisée
 document.getElementById("btnNotation").textContent=state.notation==="fr"?"Do Ré Mi":"C D E";
 applySettings();
-loadExcerpt(); loadExcerptImg(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
+initExcerpts(); buildNotes(); renderStaff(); updateReadout(); syncLevelSeg(); syncModeSeg();
+updateAccountUI(); maybeInitAccount();
 updateQuizScore();
 </script>
 
