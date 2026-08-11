@@ -564,7 +564,7 @@
         <input type="email" id="accEmail" placeholder="votre@email.fr" autocomplete="email" inputmode="email">
         <button class="ghost-btn" id="accSend" style="width:100%;margin-top:8px;">Recevoir mon code de connexion</button>
         <div id="accCodeRow">
-          <input type="text" id="accCode" placeholder="Code à 6 chiffres reçu par e-mail" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+          <input type="text" id="accCode" placeholder="Code reçu par e-mail" inputmode="numeric" autocomplete="one-time-code" maxlength="10">
           <button class="ghost-btn" id="accVerify" style="width:100%;margin-top:8px;">Valider le code</button>
         </div>
         <div class="sh" id="accMsg" style="min-height:15px;"></div>
@@ -2416,7 +2416,7 @@ document.getElementById("accSend").onclick=async function(){
     const {error}=await supa.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
     if(error) throw error;
     document.getElementById("accCode").value="";
-    setAccMsg("E-mail envoyé ! Saisissez ci-dessous le code à 6 chiffres qu'il contient.");
+    setAccMsg("E-mail envoyé ! Saisissez ci-dessous le code chiffré qu'il contient.");
   }catch(e){ setAccMsg("Envoi impossible : "+((e&&e.message)||"vérifiez la connexion.")); }
   this.disabled=false;
 };
@@ -2425,8 +2425,9 @@ document.getElementById("accSend").onclick=async function(){
    pour l'app installée sur l'écran d'accueil, qui ne partage pas sa session). */
 document.getElementById("accVerify").onclick=async function(){
   const email=(document.getElementById("accEmail").value||"").trim();
-  const code=(document.getElementById("accCode").value||"").trim();
-  if(!/^\d{6}$/.test(code)){ setAccMsg("Le code comporte 6 chiffres."); return; }
+  // On retire espaces et tirets : le code peut compter 6 à 10 chiffres selon le réglage Supabase.
+  const code=(document.getElementById("accCode").value||"").replace(/[\s-]/g,"");
+  if(!/^\d{6,10}$/.test(code)){ setAccMsg("Saisissez le code reçu (6 à 10 chiffres)."); return; }
   this.disabled=true; setAccMsg("Vérification…");
   try{
     await initAccount();                      // au cas où le client n'a pas encore été initialisé
