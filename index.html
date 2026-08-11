@@ -58,9 +58,10 @@
   .set-row .sl{font-size:14px;font-weight:600;}
   .set-row .sh{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4;}
   .set-row input[type=range]{width:100%;margin-top:11px;accent-color:var(--brass);height:24px;}
-  .set-row input[type=email]{width:100%;margin-top:10px;background:var(--ink-3);border:1px solid var(--line);
+  .set-row input[type=email],.set-row input[type=text]{width:100%;margin-top:10px;background:var(--ink-3);border:1px solid var(--line);
     border-radius:10px;padding:11px 12px;color:var(--text);font-family:inherit;font-size:14px;}
-  .set-row input[type=email]:focus{outline:none;border-color:var(--brass);}
+  .set-row input[type=email]:focus,.set-row input[type=text]:focus{outline:none;border-color:var(--brass);}
+  #accCode{letter-spacing:.35em;text-align:center;font-variant-numeric:tabular-nums;}
   .set-val{color:var(--brass-soft);font-variant-numeric:tabular-nums;font-weight:400;}
   body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after{animation-duration:.001ms!important;transition-duration:.001ms!important;}
   .kicker{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--brass);font-weight:600;margin:0 0 4px;}
@@ -561,9 +562,13 @@
       <div class="sh">Synchronisez votre progression (XP, badges, historique, paliers de passaggio) entre vos appareils. Les réglages et les partitions restent propres à chaque appareil.</div>
       <div id="accLoggedOut">
         <input type="email" id="accEmail" placeholder="votre@email.fr" autocomplete="email" inputmode="email">
-        <button class="ghost-btn" id="accSend" style="width:100%;margin-top:8px;">Recevoir mon lien de connexion</button>
+        <button class="ghost-btn" id="accSend" style="width:100%;margin-top:8px;">Recevoir mon code de connexion</button>
+        <div id="accCodeRow">
+          <input type="text" id="accCode" placeholder="Code à 6 chiffres reçu par e-mail" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+          <button class="ghost-btn" id="accVerify" style="width:100%;margin-top:8px;">Valider le code</button>
+        </div>
         <div class="sh" id="accMsg" style="min-height:15px;"></div>
-        <div class="sh" style="opacity:.75;">Pas de mot de passe : un lien sécurisé vous est envoyé par e-mail. En vous connectant, votre e-mail et votre progression sont stockés sur Supabase (serveurs en Europe).</div>
+        <div class="sh" style="opacity:.75;">Pas de mot de passe : un code sécurisé vous est envoyé par e-mail, à saisir ici. En vous connectant, votre e-mail et votre progression sont stockés sur Supabase (serveurs en Europe).</div>
       </div>
       <div id="accLoggedIn" class="hide">
         <div class="sh" id="accWho" style="color:var(--text);"></div>
@@ -2405,13 +2410,31 @@ document.getElementById("accSend").onclick=async function(){
   const email=(document.getElementById("accEmail").value||"").trim();
   if(!/.+@.+\..+/.test(email)){ setAccMsg("Adresse e-mail invalide."); return; }
   if(!accountConfigured()){ setAccMsg("Le service de compte n'est pas encore configuré — bientôt disponible."); return; }
-  this.disabled=true; setAccMsg("Envoi du lien…");
+  this.disabled=true; setAccMsg("Envoi du code…");
   try{
     await initAccount();
     const {error}=await supa.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});
     if(error) throw error;
-    setAccMsg("Lien envoyé ! Ouvrez l'e-mail sur CET appareil et touchez le lien pour vous connecter.");
+    document.getElementById("accCode").value="";
+    setAccMsg("E-mail envoyé ! Saisissez ci-dessous le code à 6 chiffres qu'il contient.");
   }catch(e){ setAccMsg("Envoi impossible : "+((e&&e.message)||"vérifiez la connexion.")); }
+  this.disabled=false;
+};
+/* Validation du code reçu par e-mail : crée la session ICI, dans l'app —
+   aucun lien à cliquer, donc aucune fuite vers le navigateur (indispensable
+   pour l'app installée sur l'écran d'accueil, qui ne partage pas sa session). */
+document.getElementById("accVerify").onclick=async function(){
+  const email=(document.getElementById("accEmail").value||"").trim();
+  const code=(document.getElementById("accCode").value||"").trim();
+  if(!/^\d{6}$/.test(code)){ setAccMsg("Le code comporte 6 chiffres."); return; }
+  this.disabled=true; setAccMsg("Vérification…");
+  try{
+    await initAccount();                      // au cas où le client n'a pas encore été initialisé
+    const {error}=await supa.auth.verifyOtp({email,token:code,type:"email"});
+    if(error) throw error;
+    document.getElementById("accCode").value="";
+    setAccMsg("");                            // onAuthStateChange bascule l'affichage et lance la synchro
+  }catch(e){ setAccMsg("Code invalide ou expiré. Redemandez un code et réessayez."); }
   this.disabled=false;
 };
 document.getElementById("accSyncNow").onclick=async function(){ setSyncMsg("Synchronisation…"); await pullProgress(); await pushProgress(); };
