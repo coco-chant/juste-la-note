@@ -2312,8 +2312,8 @@ document.getElementById("setReduce").onclick=function(){
    Connexion par « lien magique » envoyé par e-mail (pas de mot de passe).
    Seule la PROGRESSION (prog) est synchronisée ; les réglages (volume,
    timbre…) et les partitions restent propres à chaque appareil. */
-const SUPA_URL="";   // ← URL du projet Supabase (à remplir)
-const SUPA_KEY="";   // ← clé publique « anon » (à remplir)
+const SUPA_URL="https://lpumfjxxkelcbavcuafn.supabase.co";
+const SUPA_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwdW1manh4a2VsY2JhdmN1YWZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0Nzg0MTcsImV4cCI6MjEwMjA1NDQxN30.Tv37SeLHgSYzmXf1snviZxaKjcFmakY3tcLV-PEc3Tw"; // clé publique « anon » (conçue pour être visible)
 let supa=null, supaUser=null, syncTimer=null, supaReady=null;
 function accountConfigured(){ return !!(SUPA_URL&&SUPA_KEY); }
 function loadSupabase(){                       // bibliothèque chargée à la demande (comme pdf.js)
