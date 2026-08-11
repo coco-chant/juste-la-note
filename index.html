@@ -557,6 +557,12 @@
       <div><div>Réduire les animations</div><div class="hint">Confort visuel, moins de mouvements</div></div>
       <button class="switch" id="setReduce" aria-pressed="false" role="switch" aria-label="Réduire les animations"></button>
     </div>
+    <div class="set-row">
+      <div class="sl">Microphone</div>
+      <div class="sh">Un casque ou un micro externe donne une bien meilleure détection. « Automatique » le préfère dès qu'il est branché.</div>
+      <select id="micSelect" class="ghost-btn" style="width:100%;margin-top:10px;" aria-label="choisir le microphone"></select>
+      <div class="sh" id="micNow" style="min-height:15px;"></div>
+    </div>
     <div class="set-row" style="border-bottom:none;">
       <div class="sl">Compte <span class="set-val" id="accStatus"></span></div>
       <div class="sh">Synchronisez votre progression (XP, badges, historique, paliers de passaggio) entre vos appareils. Les réglages et les partitions restent propres à chaque appareil.</div>
@@ -743,7 +749,7 @@ const CLEFS={
 };
 let state={clef:"tenor8",notation:"fr",reveal:false,auto:true,notes:[],idx:0,singIdx:0,droneOn:false,excAlter:0,singAlter:0};
 /* Réglages persistés à part des progrès (ex : niveau du quiz d'oreille). */
-let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false,voiceType:"tenor",timbre:"piano"};
+let settings={quizLevel:"medium",quizMode:"notes",volume:1.0,diapason:440,notation:"fr",reduceMotion:false,voiceType:"tenor",timbre:"piano",micDeviceId:"auto"};
 function loadSettings(){try{const r=localStorage.getItem("justenote_settings");if(r)settings=Object.assign(settings,JSON.parse(r));}catch(e){}}
 function saveSettings(){try{localStorage.setItem("justenote_settings",JSON.stringify(settings));}catch(e){}}
 function buildNotes(){
@@ -978,20 +984,73 @@ function buildPiano(){
 const lit=k=>{k.classList.add("lit");setTimeout(()=>k.classList.remove("lit"),300);};
 
 /* ================= MICRO / PITCH ================= */
-let mic={stream:null,analyser:null,buf:null,raf:null,on:false,lastAnalyse:0};
-/* Active le micro (une seule fois) et prépare l'analyseur. Réutilisable par
-   l'onglet Chanter ET l'onglet Extrait. Renvoie true si le micro est prêt. */
-async function ensureMic(){
-  if(mic.on) return true;
+let mic={stream:null,analyser:null,buf:null,raf:null,on:false,lastAnalyse:0,label:""};
+/* Reconnaît un micro « externe » (casque filaire, Bluetooth, micro USB…) à son
+   intitulé : on le préfère automatiquement au micro intégré, bien meilleur. */
+const EXT_MIC=/casque|écouteur|ecouteur|headset|headphone|airpod|bluetooth|usb|external|externe|micro(phone)? ext|jack|filaire|wired|beats|earbud/i;
+const BUILTIN_MIC=/intégré|integre|internal|built-?in|iphone|ipad|macbook|tablette|téléphone|telephone|default/i;
+async function listMics(){
+  try{
+    if(!navigator.mediaDevices||!navigator.mediaDevices.enumerateDevices) return [];
+    const d=await navigator.mediaDevices.enumerateDevices();
+    return d.filter(x=>x.kind==="audioinput");
+  }catch(e){ return []; }
+}
+/* Quel micro utiliser ? Réglage explicite, sinon détection automatique. */
+async function pickMicDeviceId(){
+  const pref=settings.micDeviceId||"auto";
+  if(pref==="system") return null;                       // choix du système, sans préférence
+  const mics=await listMics();
+  if(pref!=="auto"){ const m=mics.find(x=>x.deviceId===pref); if(m) return m.deviceId; }
+  // Automatique : on privilégie un micro externe si on en repère un.
+  const ext=mics.find(x=>x.label&&EXT_MIC.test(x.label)&&!BUILTIN_MIC.test(x.label));
+  return ext?ext.deviceId:null;
+}
+function stopMicStream(){
+  if(mic.raf){ cancelAnimationFrame(mic.raf); mic.raf=null; }
+  if(mic.stream){ try{ mic.stream.getTracks().forEach(t=>t.stop()); }catch(e){} }
+  mic.stream=null; mic.analyser=null; mic.on=false; mic.label="";
+}
+/* Active le micro et prépare l'analyseur. Réutilisable par les onglets Chanter,
+   Extrait et Passaggio. force=true : refait l'acquisition (changement d'appareil).
+   Renvoie true si le micro est prêt. */
+async function ensureMic(force){
+  if(mic.on&&!force) return true;
+  if(force) stopMicStream();
+  const base={echoCancellation:false,noiseSuppression:false,autoGainControl:false};
   try{
     const ctx=ac();
-    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    let stream=null;
+    const id=await pickMicDeviceId();
+    if(id){                                              // micro choisi/détecté
+      try{ stream=await navigator.mediaDevices.getUserMedia({audio:Object.assign({deviceId:{exact:id}},base)}); }
+      catch(e){ stream=null; }                           // débranché entre-temps : on retombe sur le système
+    }
+    if(!stream) stream=await navigator.mediaDevices.getUserMedia({audio:base});
     mic.stream=stream;
+    const tr=stream.getAudioTracks()[0];
+    mic.label=(tr&&tr.label)||"";
     const src=ctx.createMediaStreamSource(stream);
     const an=ctx.createAnalyser(); an.fftSize=2048; src.connect(an);
     mic.analyser=an; mic.buf=new Float32Array(an.fftSize); mic.on=true;
+    // Une fois l'autorisation obtenue, les intitulés deviennent lisibles :
+    // si l'on était en automatique sans avoir vu les noms, on refait un essai.
+    if(!force&&(settings.micDeviceId||"auto")==="auto"){
+      const better=await pickMicDeviceId();
+      if(better&&tr&&tr.getSettings&&tr.getSettings().deviceId!==better) return ensureMic(true);
+    }
+    refreshMicUI();
     return true;
   }catch(e){ return false; }
+}
+/* Branchement/débranchement d'un casque pendant l'utilisation : on bascule. */
+if(navigator.mediaDevices&&navigator.mediaDevices.addEventListener){
+  navigator.mediaDevices.addEventListener("devicechange",async()=>{
+    if(!mic.on) { refreshMicUI(); return; }
+    const wasRunning=!!mic.raf;
+    await ensureMic(true);                                // reprend le meilleur micro disponible
+    if(wasRunning&&mic.on&&!mic.raf) loopMic();
+  });
 }
 async function startMic(){
   const ok=await ensureMic();
@@ -1026,6 +1085,9 @@ function autoCorrelate(buf,sr){
 function singTargetMidi(){const n=state.notes[state.singIdx],c=CLEFS[state.clef];return midiOf(n.letter,n.oct)+(state.singAlter||0)+c.shift;}
 let collecting=false, samples=[];
 function loopMic(){
+  // Le micro peut être en cours de changement (casque branché/débranché) :
+  // on suspend la boucle proprement plutôt que de lire un analyseur absent.
+  if(!mic.on||!mic.analyser){ mic.raf=null; return; }
   mic.raf=requestAnimationFrame(loopMic);
   const now=performance.now(); if(now-mic.lastAnalyse<33) return; mic.lastAnalyse=now;
   mic.analyser.getFloatTimeDomainData(mic.buf);
@@ -2083,6 +2145,33 @@ const KNOW=[
     {h:"Le bel canto et les castrats",p:"Aux XVIIᵉ–XVIIIᵉ siècles triomphe le « bel canto » (« beau chant » italien), qui met en avant la beauté du son, la longueur du souffle, la ligne et la virtuosité. C'est aussi l'ère des castrats, chanteurs à la voix d'une puissance et d'une agilité exceptionnelles, star du baroque — une pratique aujourd'hui disparue."},
     {h:"L'âge d'or du XIXᵉ siècle",p:"Le XIXᵉ siècle porte l'opéra à son apogée avec Rossini, Bellini et Donizetti (bel canto romantique), puis Verdi en Italie et Wagner en Allemagne, qui exigent des voix plus puissantes. En parallèle se développe le lied allemand (Schubert) et la mélodie française : un chant intime, accompagné au piano, au service de la poésie."},
     {h:"Le XXᵉ siècle et les musiques actuelles",p:"Le XXᵉ siècle élargit encore la palette vocale (nouvelles techniques, musiques du monde) et voit l'essor de la voix amplifiée par le microphone : jazz, chanson, comédie musicale, pop… La technique lyrique moderne, celle que travaillent ténors et barytons de concert, reste l'héritière directe du bel canto italien."}
+  ]},
+  {ic:"👩‍🎤",t:"Les voix de femmes",s:"Registres, passaggi et répertoire",ex:[
+    {h:"Soprano, mezzo, contralto",p:[
+      "La soprano est la voix féminine la plus aiguë, avec une tessiture usuelle allant environ du do central au la aigu ; on la subdivise selon la couleur et l'agilité : soprano léger (colorature, très virtuose), lyrique (la plus courante), dramatique (puissante, pour Verdi ou Wagner).",
+      "La mezzo-soprano occupe le médium : timbre plus corsé, souvent chargé des rôles de caractère (Carmen) ou de travesti (jeunes garçons joués par des femmes). La contralto, rare, descend nettement plus bas avec des graves sombres et pleins. Comme chez les hommes, c'est la zone de confort et la couleur qui classent une voix, pas seulement la note extrême."
+    ]},
+    {h:"Les passaggi féminins",p:[
+      "Les voix de femmes n'ont pas un mais deux passages notables. Le premier (primo passaggio) se situe assez bas, souvent autour de mi–fa₄ : c'est là que la voix quitte le registre de poitrine. Le second (secondo passaggio) se trouve environ une quarte plus haut, vers la–si₄ chez la soprano, un peu plus bas chez la mezzo.",
+      "Contrairement aux hommes, les femmes chantent l'essentiel de leur répertoire au-dessus du premier passage, en voix de tête ou mixte. Le travail consiste donc surtout à égaliser le grave (sans « claquer » en poitrine) et à assouplir la montée vers l'aigu. L'onglet Passaggio propose des sirènes réglées pour l'alto, la mezzo et la soprano."
+    ]},
+    {h:"Le registre de sifflet",p:"Au-delà de la voix de tête, certaines voix accèdent à un registre extrême dit « de sifflet » (whistle register), au-dessus du contre-ut, où seule une petite portion des cordes vocales vibre. Spectaculaire (la Reine de la Nuit de Mozart en frôle les abords), il ne se travaille jamais en force et reste facultatif : ce n'est pas un objectif technique, mais une particularité individuelle."},
+    {h:"Voix et cycle hormonal",p:"Les variations hormonales peuvent modifier passagèrement la voix : légère baisse de souplesse, aigus moins libres, sensation de voile. C'est physiologique et transitoire. Dans ces périodes, on allège le travail de l'aigu, on soigne l'hydratation et on évite de forcer — la voix retrouve ensuite ses moyens. Une gêne persistante justifie un avis phoniatrique, comme pour toute voix."},
+    {h:"Repères de répertoire",p:"Pour commencer sans se mettre en danger : airs anciens italiens (Caccini, Giordani), mélodies de Fauré ou Duparc, lieder de Schubert transposés au besoin. On évite d'emblée les grands rôles dramatiques (Wagner, Verdi tardif, Puccini vériste), qui demandent une voix déjà construite et beaucoup d'endurance."}
+  ]},
+  {ic:"🧠",t:"Travailler efficacement",s:"Méthode, mémoire, trac",ex:[
+    {h:"Des séances courtes et régulières",p:"Le progrès vocal vient de la répétition espacée, pas des longues séances. Vingt à trente minutes par jour valent mieux que trois heures le dimanche : la voix est un ensemble musculaire et nerveux qui a besoin de sollicitations fréquentes et de récupération. Cinq minutes d'échauffement quotidien valent déjà beaucoup."},
+    {h:"Apprendre un morceau par étapes",p:[
+      "Une méthode éprouvée consiste à séparer les difficultés au lieu de tout affronter en même temps : d'abord le rythme (parlé, en frappant la pulsation), puis les hauteurs (solfiées lentement, ou avec l'onglet Extrait de cette application), puis le texte seul (parlé, en cherchant le sens), et enfin l'assemblage.",
+      "Travaillez par courtes phrases plutôt qu'en enchaînant tout : on répète le passage difficile isolément, lentement, puis on le raccroche à ce qui précède. C'est ainsi qu'on évite de graver une erreur par répétition."
+    ]},
+    {h:"L'écoute intérieure",p:"Avant d'émettre une note, on gagne à l'entendre mentalement : c'est ce qu'on appelle l'audiation ou écoute intérieure. Cette anticipation guide la justesse bien mieux qu'un ajustement après coup. Les exercices de l'onglet Oreille — écouter, chanter mentalement, puis reconnaître — développent précisément cette capacité."},
+    {h:"Apprivoiser le trac",p:"Le trac est une réaction physiologique normale : montée d'adrénaline, souffle court, cœur rapide. On l'atténue par une expiration lente et allongée (qui calme le système nerveux), par une préparation suffisante, et par des mises en situation progressives — chanter devant une personne, puis trois, puis dix. Le but n'est pas de supprimer le trac mais de le rendre utilisable : bien géré, il rend l'interprétation plus vivante."}
+  ]},
+  {ic:"📖",t:"Petit glossaire",s:"Les mots qu'on croise en chant",ex:[
+    {h:"Termes de technique vocale",p:"Appoggio : équilibre du souffle soutenu. Passaggio : zone de transition entre registres. Messa di voce : crescendo puis decrescendo sur une note tenue. Couverture : arrondissement de la voyelle dans l'aigu. Portamento : glissement expressif d'une note à l'autre. Vibrato : légère oscillation régulière de la hauteur, signe d'une émission libre."},
+    {h:"Termes de musique et d'interprétation",p:"A cappella : sans accompagnement. Legato / staccato : lié / détaché. Rubato : liberté souple du tempo. Da capo : reprise depuis le début. Tessiture : zone confortable de la voix. Diapason : hauteur de référence (La 440 Hz). Transposer : déplacer tout un morceau plus haut ou plus bas."},
+    {h:"Formes vocales",p:"Aria : air d'opéra, moment lyrique développé. Récitatif : chant proche de la parole qui fait avancer l'action. Lied : mélodie allemande sur un poème, avec piano. Mélodie : son équivalent français. Oratorio : grande œuvre sacrée non scénique. Chœur : ensemble de chanteurs, généralement réparti en pupitres (soprano, alto, ténor, basse)."}
   ]}
 ];
 function renderAccordions(listEl,data){
@@ -2278,8 +2367,25 @@ function applySettings(){
   document.body.classList.toggle("reduce-motion", !!settings.reduceMotion);
   if(outGain) outGain.gain.value=1.35*(settings.volume||1);
 }
+/* Liste des micros disponibles + micro réellement utilisé.
+   Les intitulés ne sont lisibles qu'une fois le micro autorisé : avant cela,
+   on n'affiche que les deux modes génériques. */
+async function refreshMicUI(){
+  const sel=document.getElementById("micSelect"); if(!sel) return;
+  const mics=await listMics();
+  const cur=settings.micDeviceId||"auto";
+  sel.innerHTML="";
+  const add=(v,t)=>{const o=document.createElement("option");o.value=v;o.textContent=t;if(v===cur)o.selected=true;sel.appendChild(o);};
+  add("auto","Automatique (préférer un casque)");
+  add("system","Micro par défaut de l'appareil");
+  mics.forEach((m,i)=>{ if(m.deviceId&&m.deviceId!=="default") add(m.deviceId, m.label||("Micro "+(i+1))); });
+  const now=document.getElementById("micNow");
+  if(mic.on) now.textContent="Micro utilisé : "+(mic.label||"micro par défaut");
+  else now.textContent=mics.some(m=>m.label)?"":"Autorisez le micro (onglet Chanter) pour voir le nom des appareils.";
+}
 // Met les contrôles de la fenêtre en accord avec les réglages mémorisés.
 function syncSettingsUI(){
+  refreshMicUI();
   document.getElementById("timbreSeg").querySelectorAll("button").forEach(b=>
     b.setAttribute("aria-pressed", b.dataset.timbre===(settings.timbre||"piano") ? "true":"false"));
   const v=document.getElementById("volRange"); v.value=settings.volume; document.getElementById("volVal").textContent=Math.round(settings.volume*100)+"%";
@@ -2287,6 +2393,17 @@ function syncSettingsUI(){
   document.getElementById("setNotation").textContent=settings.notation==="fr"?"Do Ré Mi":"C D E";
   document.getElementById("setReduce").setAttribute("aria-pressed", settings.reduceMotion?"true":"false");
 }
+/* Changement de micro : on réacquiert aussitôt, et on relance l'écoute si elle tournait. */
+document.getElementById("micSelect").onchange=async function(){
+  settings.micDeviceId=this.value; saveSettings();
+  if(mic.on){
+    const wasRunning=!!mic.raf;
+    const ok=await ensureMic(true);
+    if(ok&&wasRunning&&!mic.raf) loopMic();
+    if(!ok) document.getElementById("micNow").textContent="Ce micro n'a pas pu être activé — réessayez ou choisissez « Automatique ».";
+  }
+  refreshMicUI();
+};
 const settingsModal=document.getElementById("settingsModal");
 function openSettings(){ syncSettingsUI(); settingsModal.classList.remove("hide"); }
 function closeSettings(){ settingsModal.classList.add("hide"); }
